@@ -1,0 +1,270 @@
+﻿================================================================
+       노트북 세팅 — 내일까지 해둘 것 + 명령어 모음
+================================================================
+
+[자칼 환경 — 변경됨]
+  자칼: Ubuntu 18.04 + ROS Melodic
+  접속: ssh jackal@192.168.0.30
+
+[노트북 환경 결정]
+  Melodic은 Ubuntu 18.04 전용이라 22.04에 못 깔음.
+  → 노트북에는 ROS 안 깔거나, ROS2 Humble만 깔 거임.
+  → 야외에선 노트북은 SSH 클라이언트로만 씀. ROS 명령어는 전부
+     자칼 안에서 침. 노트북에 ROS 없어도 무관.
+  → 캡스톤(B)는 연구실 와서 따로. 그때 ROS2+ros1_bridge 처리.
+
+
+================================================================
+PART 1.  WSL2 + Ubuntu 22.04 설치 (오늘 밤 안에)
+================================================================
+
+▶ 1-1. WSL2 설치 (PowerShell 관리자 권한)
+
+    wsl --install -d Ubuntu-22.04
+
+  → 재부팅 한 번 필요할 수도. 끝나면 Ubuntu 자동 실행.
+  → username/password 설정 (sudo용)
+
+  설치 확인:
+    wsl --list --verbose
+  VERSION이 2여야 함. 1이면:
+    wsl --set-version Ubuntu-22.04 2
+
+
+▶ 1-2. WSL 안에서 기본 패키지
+
+    sudo apt update && sudo apt upgrade -y
+    sudo apt install -y curl wget git build-essential \
+                        net-tools openssh-client tmux vim rsync
+
+
+▶ 1-3. SSH 키 (자칼 비번 매번 안 치게)
+
+    ssh-keygen -t ed25519                 # 엔터 다 눌러도 됨
+    ssh-copy-id jackal@192.168.0.30       # 비번 1번만 입력하면 끝
+    ssh jackal@192.168.0.30               # 이제 비번 없이 로그인
+
+
+▶ 1-4. .wslconfig — mirrored networking (캡스톤 테스트용)
+
+  Windows 측에서 메모장 열고 %UserProfile%\.wslconfig 파일 만들기:
+  ─────────────────────────────────────────
+  [wsl2]
+  networkingMode=mirrored
+  ─────────────────────────────────────────
+  PowerShell:
+    wsl --shutdown
+    # 다시 wsl 들어가면 mirrored mode 적용
+
+  확인:
+    ip addr show     # 노트북 윈도우 IP랑 같은 대역인지
+
+  → 야외엔 영향 없음. 연구실 와서 자칼 토픽 직접 받으려면 필수.
+
+
+▶ 1-5. ROS2 Humble 설치 (캡스톤 테스트 전용, 오늘은 안 깔아도 됨)
+        ※ 야외 작업엔 불필요. 연구실 들어오기 전에 깔면 됨.
+
+    sudo apt install -y software-properties-common
+    sudo add-apt-repository universe
+    sudo apt update && sudo apt install curl -y
+    sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -o /usr/share/keyrings/ros-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+        | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+    sudo apt update
+    sudo apt install -y ros-humble-desktop ros-humble-cv-bridge \
+                        ros-humble-message-filters python3-colcon-common-extensions
+    pip install ultralytics opencv-python
+
+
+▶ 1-6. ros1_bridge (캡스톤용, Melodic↔Humble은 까다로움)
+        ※ Humble의 ros1_bridge는 기본적으로 Noetic을 가정. Melodic 쓰는
+          자칼이랑 직접 brigde는 검증 안 됨. 옵션 두 가지:
+          a) 자칼에 노트북 IP 등록 + ROS_MASTER_URI만으로 직접 통신
+             (실은 이게 더 간단, ros1_bridge 없이도 가능)
+          b) 도커로 Melodic 환경에서 ros1_bridge 빌드
+        ※ 일단 a 시도. 안 되면 b. 야외 작업 끝나고 따로 시간 잡고.
+
+
+▶ 1-7. solcam 코드 가져오기
+
+  D: 드라이브에 이미 있으니까 WSL에서:
+    ls /mnt/d/solcam
+
+
+================================================================
+PART 2.  내일 야외 (저텍스처) — 노트북에서 칠 것
+================================================================
+
+[전제: 자칼이 부팅되고 핫스팟에 붙어있음]
+
+▶ 2-1. 자칼 IP 확인
+
+  핫스팟 폰 → 연결된 기기 → 자칼 찾기
+  또는 자칼에 모니터/키보드 직결: ip addr show
+
+  IP 메모: ____________________ (예: 192.168.0.30 또는 핫스팟 IP)
+
+
+▶ 2-2. 노트북 WSL → 자칼 SSH
+
+    ssh jackal@<jackal_ip>
+    tmux new -s jackal
+
+  tmux 단축키:
+    Ctrl+b "   가로 분할
+    Ctrl+b %   세로 분할
+    Ctrl+b ←→↑↓  창 이동
+    Ctrl+b d   detach (세션 살아있음)
+    tmux attach -t jackal   재접속
+
+
+▶ 2-3. 스크립트 자칼로 옮기기 (처음 한 번)
+
+  WSL 새 창 (SSH 안 말고):
+    scp /mnt/d/solcam/jackal_scripts/lawnmower.py \
+        /mnt/d/solcam/jackal_scripts/square.py \
+        jackal@<jackal_ip>:~/
+
+
+▶ 2-4. 자칼 안에서 (SSH/tmux 안)
+
+  ── 창 1: 카메라 ──
+    source /opt/ros/melodic/setup.bash
+    roslaunch realsense2_camera rs_camera.launch \
+      align_depth:=true enable_gyro:=true enable_accel:=true \
+      unite_imu_method:=linear_interpolation
+
+  ── 창 2: Dynamixel workbench ──
+    source /opt/ros/melodic/setup.bash
+    source ~/catkin_ws/devel/setup.bash
+    roslaunch dynamixel_workbench_controllers dynamixel_controllers.launch
+
+  ── 창 3: 틸트 명령 ──
+    source /opt/ros/melodic/setup.bash
+    # 45도 (저텍스처 메인)
+    rosservice call /dynamixel_workbench/dynamixel_command \
+      "command: '' id: 1 addr_name: 'Goal_Position' value: 1536"
+    # 90도 (수직)
+    # value: 1024
+    # 0도 (정면, 종료 시)
+    # value: 2048
+
+  ── 창 4: rosbag ──
+    source /opt/ros/melodic/setup.bash
+    mkdir -p ~/data/$(date +%Y%m%d) && cd ~/data/$(date +%Y%m%d)
+    rosbag record -O lawnmower45_$(date +%H%M%S).bag \
+      /camera/color/image_raw /camera/color/camera_info \
+      /camera/aligned_depth_to_color/image_raw \
+      /camera/aligned_depth_to_color/camera_info \
+      /imu/data /odometry/filtered /tf /tf_static
+
+  ── 창 5: 자율주행 ──
+    source /opt/ros/melodic/setup.bash
+    python ~/lawnmower.py
+    # 또는 python ~/square.py
+
+
+▶ 2-5. 종료 (안전)
+
+  창 5 → 자연 종료 또는 Ctrl+C
+  창 4 → Ctrl+C (rosbag 저장 마무리)
+  창 3 → 틸트 0도 복귀:
+        rosservice call /dynamixel_workbench/dynamixel_command \
+          "command: '' id: 1 addr_name: 'Goal_Position' value: 2048"
+  창 2 → Ctrl+C
+  창 1 → Ctrl+C
+
+
+▶ 2-6. bag 가져오기
+
+  WSL 새 창 (SSH 아닌):
+    mkdir -p /mnt/d/jackal_data
+    rsync -avh --progress \
+        jackal@<jackal_ip>:~/data/ \
+        /mnt/d/jackal_data/
+
+  자칼에서 지우려면:
+    ssh jackal@<jackal_ip> "rm -rf ~/data/<날짜>"
+
+
+================================================================
+PART 3.  연구실 돌아와서 (캡스톤 B 테스트) — 추후
+================================================================
+
+야외 작업 끝나고 따로 시간 잡고 진행. 핵심 단계만:
+
+  1. 노트북, 자칼 같은 LAN (와이파이/이더넷)
+  2. mirrored mode 적용된 WSL
+  3. 노트북 WSL에서 자칼 ROS_MASTER로 토픽 보이는지 확인:
+       export ROS_MASTER_URI=http://192.168.0.30:11311
+       export ROS_IP=$(hostname -I | awk '{print $1}')
+       # ROS Melodic 클라이언트 도구가 노트북에 있어야 rostopic 가능
+       # 또는 그냥 자칼 안에서 토픽 확인하면서 노트북은 ROS2만 처리
+  4. 노트북 WSL에서 ROS2 follow_pipeline 실행:
+       cd ~/follow_ws && source install/setup.bash
+       ros2 launch ros2_follow_node follow_pipeline.launch.py
+  5. ros1_bridge 또는 직접 통신으로 토픽 연동 (시도/검증 필요)
+  6. mode 0 → 2 → 1 순서로 검증
+
+  자세한 내용은 ros2_follow_node/launch/follow_pipeline.launch.py 참조.
+
+
+================================================================
+PART 4.  자주 쓸 명령어 1줄
+================================================================
+
+  자칼 SSH:
+    ssh jackal@192.168.0.30
+
+  스크립트 보내기:
+    scp /mnt/d/solcam/jackal_scripts/*.py \
+        jackal@192.168.0.30:~/
+
+  bag 가져오기:
+    rsync -avh --progress \
+        jackal@192.168.0.30:~/data/ /mnt/d/jackal_data/
+
+  WSL 끄기/켜기 (네트워크 꼬일 때):
+    PowerShell:  wsl --shutdown
+    그 후 다시 wsl
+
+
+================================================================
+PART 5.  체크리스트
+================================================================
+
+오늘 밤:
+  [ ] WSL2 + Ubuntu 22.04 설치 (Part 1-1)
+  [ ] 기본 패키지 + tmux/rsync (Part 1-2)
+  [ ] ssh-keygen + ssh-copy-id 자칼 (Part 1-3)
+  [ ] .wslconfig mirrored mode (Part 1-4) — 야외엔 영향 없지만 미리
+  [ ] /mnt/d/solcam 보이는지 확인
+  [ ] (선택) ROS2 Humble — 캡스톤 테스트 전에만 깔면 됨
+
+내일 야외 출발 전:
+  [ ] 노트북 충전
+  [ ] 핫스팟 폰 데이터 충분
+  [ ] 자칼 IP 확인 방법 준비 (모니터/키보드 직결 케이블, 또는 폰 핫스팟 기기 목록)
+  [ ] CHEATSHEET.txt 한 번 읽고 가기
+  [ ] 자칼 SSD 용량 확인 (rosbag 큼)
+  [ ] 줄자 (자율주행 거리 검증용)
+  [ ] D435i, Dynamixel 케이블/전원 챙김
+
+내일 현장:
+  [ ] 자칼 부팅 + IP 확인
+  [ ] 노트북 WSL에서 ssh 붙기
+  [ ] tmux 5창 띄우기 (Part 2-4)
+  [ ] 짧게 1~2m 한 번 테스트 후 본 수집
+  [ ] 종료 시 틸트 0도 복귀 (안전)
+  [ ] bag 노트북으로 회수 (rsync)
+
+연구실 돌아와서 (시간 여유 있을 때):
+  [ ] ROS2 Humble 설치 (Part 1-5)
+  [ ] mirrored mode WSL 재기동 확인
+  [ ] /mnt/d/solcam 빌드
+  [ ] ros1_bridge or 직접 통신 검증
+  [ ] mode=0 → 2 → 1 순서로 캡스톤 검증
+
+================================================================

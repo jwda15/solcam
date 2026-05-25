@@ -1,0 +1,40 @@
+oak_detector:
+  ros__parameters:
+
+    # ============================================================
+    # OAK-D S2 온보드 YOLO detector (DepthAI v3, 2026-05-25 정합)
+    #
+    # ※ 이 파일은 oak_detector.py(v3, SpatialDetectionNetwork)가
+    #   실제로 declare/read하는 파라미터만 담는다.
+    #   과거 v2 .blob 방식 키(blob_path, nn_input_size, num_classes,
+    #   coordinate_size, anchors, anchor_masks_* 등)는 v3 코드가 읽지
+    #   않으므로 전부 제거함.
+    # ============================================================
+
+    # ── 모델 (HubAI model zoo, RVC2 SUPERBLOB 자동 다운로드) ──
+    #   "yolov6-nano"          -> 512x384 (현재 사용)
+    #   "yolov6-nano:r2-coco-512x288" -> 512x288 (16:9 변형)
+    #   ※ v8/v10/v11 detection은 zoo에 RVC2 blob이 없어 온라인 변환 필요.
+    #   ※ zoo 모델은 8-shave 컴파일이라 stereo extended/subpixel과 충돌함.
+    model: "yolov6-nano"
+
+    # ── Preview / 해상도 ─────────────────────────
+    #   ★ NN 입력 종횡비와 반드시 일치시킬 것. 불일치 시 NN이 crop/scale
+    #     하면서 정규화 좌표가 어긋나 박스가 가로로 밀려 보임.
+    #   ★ tracking_params.yaml의 image_width/height와도 일치시킬 것.
+    #     (owner 초기화 "화면 중앙" 기준이 어긋나지 않게)
+    #   yolov6-nano = 512x384.
+    preview_width:  512
+    preview_height: 384
+
+    # ── 필터 ─────────────────────────────────────
+    person_only:  true        # COCO class 0(person)만 통과
+    conf_thresh:  0.5         # NN단 신뢰도 임계값 (setConfidenceThreshold)
+
+    # ── Spatial(depth) ───────────────────────────
+    depth_lower_mm: 100       # 스테레오 근거리 한계 부근 (mm)
+    depth_upper_mm: 8000      # 사용 최대 거리 (mm)
+    bbox_scale:     0.5       # spatial 계산 시 bbox 중앙 50%만 (배경 침투 방지)
+
+    # ── 기타 ─────────────────────────────────────
+    publish_rgb: true         # viz용 RGB(/oak/rgb/image_raw). 대역폭 아끼려면 false.

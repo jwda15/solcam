@@ -12,11 +12,17 @@ byte_track::BYTETracker::BYTETracker(const int& frame_rate,
                                      const int& track_buffer,
                                      const float& track_thresh,
                                      const float& high_thresh,
-                                     const float& match_thresh) :
+                                     const float& match_thresh,
+                                     const float& std_weight_position,
+                                     const float& std_weight_velocity,
+                                     const float& std_weight_depth) :
     track_thresh_(track_thresh),
     high_thresh_(high_thresh),
     match_thresh_(match_thresh),
     max_time_lost_(static_cast<size_t>(frame_rate / 30.0 * track_buffer)),
+    std_weight_position_(std_weight_position),
+    std_weight_velocity_(std_weight_velocity),
+    std_weight_depth_(std_weight_depth),
     frame_id_(0),
     track_id_count_(0)
 {
@@ -28,16 +34,17 @@ byte_track::BYTETracker::~BYTETracker()
 
 std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(const std::vector<Object>& objects)
 {
-    ////////////////// Step 1: Get detections //////////////////
+    ////////////////// Step 1: detection 수집 //////////////////
     frame_id_++;
 
-    // Create new STracks using the result of object detection
-    std::vector<STrackPtr> det_stracks;
-    std::vector<STrackPtr> det_low_stracks;
+    // detection 결과로 STrack 임시 객체 생성 (아직 track_id 없음)
+    std::vector<STrackPtr> det_stracks;      // 고신뢰도 detection (track_thresh 이상)
+    std::vector<STrackPtr> det_low_stracks;  // 저신뢰도 detection (2차 매칭에 사용)
 
     for (const auto &object : objects)
     {
-        const auto strack = std::make_shared<STrack>(object.rect, object.prob);
+        const auto strack = std::make_shared<STrack>(object.rect, object.depth, object.prob,
+            std_weight_position_, std_weight_velocity_, std_weight_depth_);
         if (object.prob >= track_thresh_)
         {
             det_stracks.push_back(strack);
@@ -48,9 +55,9 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
         }
     }
 
-    // Create lists of existing STrack
-    std::vector<STrackPtr> active_stracks;
-    std::vector<STrackPtr> non_active_stracks;
+    // 기존 트랙을 활성/비활성으로 분리
+    std::vector<STrackPtr> active_stracks;      // is_activated = true 인 트랙
+    std::vector<STrackPtr> non_active_stracks;  // is_activated = false (아직 미확정)
     std::vector<STrackPtr> strack_pool;
 
     for (const auto& tracked_strack : tracked_stracks_)
@@ -65,15 +72,16 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
         }
     }
 
+    // 활성 트랙 + lost 트랙을 합쳐서 매칭 풀 구성
     strack_pool = jointStracks(active_stracks, lost_stracks_);
 
-    // Predict current pose by KF
+    // Kalman으로 모든 트랙의 다음 위치 예측 (detection 없이)
     for (auto &strack : strack_pool)
     {
         strack->predict();
     }
 
-    ////////////////// Step 2: First association, with IoU //////////////////
+    ////////////////// Step 2: 1차 매칭 - 고신뢰도 detection //////////////////
     std::vector<STrackPtr> current_tracked_stracks;
     std::vector<STrackPtr> remain_tracked_stracks;
     std::vector<STrackPtr> remain_det_stracks;
@@ -83,7 +91,7 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
         std::vector<std::vector<int>> matches_idx;
         std::vector<int> unmatch_detection_idx, unmatch_track_idx;
 
-        const auto dists = calcIouDistance(strack_pool, det_stracks);
+        const auto dists = calcMahalanobisCost(strack_pool, det_stracks);
         linearAssignment(dists, strack_pool.size(), det_stracks.size(), match_thresh_,
                          matches_idx, unmatch_track_idx, unmatch_detection_idx);
 
@@ -117,14 +125,15 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
         }
     }
 
-    ////////////////// Step 3: Second association, using low score dets //////////////////
+    ////////////////// Step 3: 2차 매칭 - 저신뢰도 detection //////////////////
     std::vector<STrackPtr> current_lost_stracks;
 
     {
         std::vector<std::vector<int>> matches_idx;
         std::vector<int> unmatch_track_idx, unmatch_detection_idx;
 
-        const auto dists = calcIouDistance(remain_tracked_stracks, det_low_stracks);
+        // 2차 매칭은 저신뢰도 detection 대상 → IoU 기반으로 매칭
+        const auto dists = calcIouCost(remain_tracked_stracks, det_low_stracks);
         linearAssignment(dists, remain_tracked_stracks.size(), det_low_stracks.size(), 0.5,
                          matches_idx, unmatch_track_idx, unmatch_detection_idx);
 
@@ -155,7 +164,7 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
         }
     }
 
-    ////////////////// Step 4: Init new stracks //////////////////
+    ////////////////// Step 4: 신규 트랙 초기화 //////////////////
     std::vector<STrackPtr> current_removed_stracks;
 
     {
@@ -163,8 +172,9 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
         std::vector<int> unmatch_unconfirmed_idx;
         std::vector<std::vector<int>> matches_idx;
 
-        // Deal with unconfirmed tracks, usually tracks with only one beginning frame
-        const auto dists = calcIouDistance(non_active_stracks, remain_det_stracks);
+        // 미확정 트랙 처리: 보통 딱 한 프레임만 나온 트랙들
+        // 미확정 트랙도 IoU 기반으로 매칭
+        const auto dists = calcIouCost(non_active_stracks, remain_det_stracks);
         linearAssignment(dists, non_active_stracks.size(), remain_det_stracks.size(), 0.7,
                          matches_idx, unmatch_unconfirmed_idx, unmatch_detection_idx);
 
@@ -181,7 +191,7 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
             current_removed_stracks.push_back(track);
         }
 
-        // Add new stracks
+        // 완전히 새로운 트랙 등록 (고신뢰도 미매칭 detection)
         for (const auto &unmatch_idx : unmatch_detection_idx)
         {
             const auto track = remain_det_stracks[unmatch_idx];
@@ -195,7 +205,7 @@ std::vector<byte_track::BYTETracker::STrackPtr> byte_track::BYTETracker::update(
         }
     }
 
-    ////////////////// Step 5: Update state //////////////////
+    ////////////////// Step 5: 전체 트랙 상태 갱신 //////////////////
     for (const auto &lost_strack : lost_stracks_)
     {
         if (frame_id_ - lost_strack->getFrameId() > max_time_lost_)
@@ -280,7 +290,8 @@ void byte_track::BYTETracker::removeDuplicateStracks(const std::vector<STrackPtr
                                                      std::vector<STrackPtr> &a_res,
                                                      std::vector<STrackPtr> &b_res) const
 {
-    const auto ious = calcIouDistance(a_stracks, b_stracks);
+    // 중복 트랙 제거도 IoU 기반으로 판단 (Mahalanobis 아님)
+    const auto ious = calcIouCost(a_stracks, b_stracks);
 
     std::vector<std::pair<size_t, size_t>> overlapping_combinations;
     for (size_t i = 0; i < ious.size(); i++)
@@ -373,7 +384,7 @@ void byte_track::BYTETracker::linearAssignment(const std::vector<std::vector<flo
     }
 }
 
-std::vector<std::vector<float>> byte_track::BYTETracker::calcIous(const std::vector<Rect<float>> &a_rect,
+std::vector<std::vector<float>> byte_track::BYTETracker::calcIouMatrix(const std::vector<Rect<float>> &a_rect,
                                                                   const std::vector<Rect<float>> &b_rect) const
 {
     std::vector<std::vector<float>> ious;
@@ -398,33 +409,48 @@ std::vector<std::vector<float>> byte_track::BYTETracker::calcIous(const std::vec
     return ious;
 }
 
-std::vector<std::vector<float> > byte_track::BYTETracker::calcIouDistance(const std::vector<STrackPtr> &a_tracks,
-                                                                          const std::vector<STrackPtr> &b_tracks) const
+std::vector<std::vector<float>> byte_track::BYTETracker::calcMahalanobisCost(const std::vector<STrackPtr> &a_tracks,
+                                                                            const std::vector<STrackPtr> &b_tracks) const
 {
-    std::vector<byte_track::Rect<float>> a_rects, b_rects;
+    // --------------------------------------------------------
+    // [3D 확장] 1차 매칭용: IoU 대신 Mahalanobis 거리로 cost matrix 계산
+    //
+    // 원래는 2D IoU를 썼는데, depth 정보를 전혀 활용 못 함
+    // Mahalanobis는 Kalman 예측값과 detection 간의 통계적 거리를 계산
+    //   → 사람이 앞뒤로 겹치는 상황에서 depth로 구분 가능
+    //   → 예측 불확실성(P)가 크면 거리를 너그럽게 허용 (adaptive)
+    // --------------------------------------------------------
+    std::vector<std::vector<float>> cost_matrix;
+    if (a_tracks.empty() || b_tracks.empty())
+    {
+        return cost_matrix;  // 한쪽이 비어있으면 빈 cost matrix 반환
+    }
+
+    // cost_matrix[i][j] = a_tracks[i] vs b_tracks[j] 의 Mahalanobis 거리
+    // 기본값 1.0 = 완전한 불일치 (임계 넘음)
+    cost_matrix.resize(a_tracks.size(), std::vector<float>(b_tracks.size(), 1.0f));
+
     for (size_t i = 0; i < a_tracks.size(); i++)
     {
-        a_rects.push_back(a_tracks[i]->getRect());
-    }
-
-    for (size_t i = 0; i < b_tracks.size(); i++)
-    {
-        b_rects.push_back(b_tracks[i]->getRect());
-    }
-
-    const auto ious = calcIous(a_rects, b_rects);
-
-    std::vector<std::vector<float>> cost_matrix;
-    for (size_t i = 0; i < ious.size(); i++)
-    {
-        std::vector<float> iou;
-        for (size_t j = 0; j < ious[i].size(); j++)
+        for (size_t j = 0; j < b_tracks.size(); j++)
         {
-            iou.push_back(1 - ious[i][j]);
-        }
-        cost_matrix.push_back(iou);
-    }
+            // detection j의 5D measurement 조립: [x, y, z, a, h]
+            KalmanFilter::DetectBox meas;
+            const auto xyah = b_tracks[j]->getRect().getXyah();
+            meas << xyah[0], xyah[1], b_tracks[j]->getDepth(), xyah[2], xyah[3];
 
+            // track i의 Kalman 예측 상태 vs detection j 사이의 Mahalanobis 거리
+            const float dist = a_tracks[i]->getKalmanFilter().gatingDistance(
+                a_tracks[i]->getMean(), a_tracks[i]->getCovariance(), meas);
+
+            // 정규화: chi2 임계(5-DOF, 95%) = 11.070 기준으로 [0, 1] 스케일링
+            //   dist / 11.070 < 1.0  → 신뢰할 수 있는 매칭
+            //   dist / 11.070 >= 1.0 → 임계 초과, 다른 사람일 가능성
+            //   std::min으로 1.0 제한 (Hungarian에 다른 값과 스케일 맞춤)
+            constexpr float chi2_thresh = 11.070f;
+            cost_matrix[i][j] = std::min(dist / chi2_thresh, 1.0f);
+        }
+    }
     return cost_matrix;
 }
 
@@ -584,4 +610,33 @@ double byte_track::BYTETracker::execLapjv(const std::vector<std::vector<float>> 
     delete[]y_c;
 
     return opt;
+}
+
+std::vector<std::vector<float>> byte_track::BYTETracker::calcIouCost(const std::vector<STrackPtr> &a_tracks,
+                                                                    const std::vector<STrackPtr> &b_tracks) const
+{
+    // --------------------------------------------------------
+    // 2차/4차 매칭용: 순수 IoU 기반 cost matrix
+    //
+    // 2차 매칭 대상은 저신뢰도 detection → bbox 자체가 이미 흐림
+    // 이때 OAK-D depth도 부정확하므로 Mahalanobis방다 IoU가 더 안정적
+    // 원본 ByteTrack 논문도 2차 매칭은 IoU만 사용
+    // --------------------------------------------------------
+    std::vector<Rect<float>> a_rects, b_rects;
+    for (const auto &t : a_tracks) a_rects.push_back(t->getRect());
+    for (const auto &t : b_tracks) b_rects.push_back(t->getRect());
+
+    const auto ious = calcIouMatrix(a_rects, b_rects);
+
+    std::vector<std::vector<float>> cost_matrix;
+    for (size_t i = 0; i < ious.size(); i++)
+    {
+        std::vector<float> row;
+        for (size_t j = 0; j < ious[i].size(); j++)
+        {
+            row.push_back(1.0f - ious[i][j]);  // cost = 1 - IoU
+        }
+        cost_matrix.push_back(row);
+    }
+    return cost_matrix;
 }

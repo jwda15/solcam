@@ -1,5 +1,24 @@
 build/*
 
+# ROS2 / colcon 빌드 산출물 (연구실에서 재빌드하므로 제외)
+build/
+build_old/
+install/
+log/
+
+# Python 캐시
+__pycache__/
+*.pyc
+
+# 임시/체크 파일
+_check.txt
+
+# 모델 가중치/아카이브 (zoo 자동다운로드하거나 별도 관리; git에 넣지 않음)
+*.tar.xz
+*.blob
+*.pt
+*.onnx
+
 # Prerequisites
 *.d
 

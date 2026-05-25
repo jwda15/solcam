@@ -1,0 +1,142 @@
+﻿================================================================
+              내일 자칼 명령어 — 핵심만
+================================================================
+
+자칼: ssh jackal@192.168.0.30
+모든 새 셸 첫 줄:
+    source /opt/ros/melodic/setup.bash
+    source ~/catkin_ws/devel/setup.bash
+
+
+================================================================
+1. 카메라 켜기
+================================================================
+
+roslaunch realsense2_camera rs_camera.launch \
+  align_depth:=true \
+  enable_gyro:=true enable_accel:=true \
+  unite_imu_method:=linear_interpolation
+
+
+================================================================
+2. 모터 각도 (Dynamixel 틸트)
+================================================================
+
+# 워크벤치 노드 띄우기 (한 번만)
+roslaunch dynamixel_workbench_controllers dynamixel_controllers.launch
+
+# 각도 변경 — value만 바꾸면 됨
+rosservice call /dynamixel_workbench/dynamixel_command \
+  "command: '' id: 1 addr_name: 'Goal_Position' value: 1536"
+
+검증된 tick 값:
+   0도 (정면)        2048
+  30도              1741
+  45도              1536    ← 저텍스처 메인
+  50도              1587
+  60도              1331
+  90도 (수직 아래)  1024
+  ※ 양수 = 아래쪽 틸트
+
+
+================================================================
+3. rosbag 녹화
+================================================================
+
+# 폴더 만들고 들어가기
+mkdir -p ~/data/$(date +%Y%m%d) && cd ~/data/$(date +%Y%m%d)
+
+# 녹화 (파일명에 각도/패턴 표기 권장)
+rosbag record -O lawnmower45_$(date +%H%M%S).bag \
+  /camera/color/image_raw \
+  /camera/color/camera_info \
+  /camera/aligned_depth_to_color/image_raw \
+  /camera/aligned_depth_to_color/camera_info \
+  /camera/imu \
+  /camera/imu_info \
+  /camera/extrinsics/depth_to_color \
+  /odometry/filtered \
+  /tf /tf_static
+
+# 토픽 설명:
+#   /camera/imu           D435i 내장 IMU 6축 — VIO/RGBD-Inertial용
+#                         (카메라랑 같은 강체에 박혀있어서 VIO에 사용 가능)
+#   /camera/imu_info      IMU 캘리브레이션 (있으면)
+#   /camera/extrinsics/depth_to_color   depth-color 카메라간 변환
+#   /odometry/filtered    자칼 EKF odom (휠 엔코더 + 본체 IMU 이미 융합됨)
+#                         → 자칼 본체 IMU(/imu/data) raw는 안 받아도 됨
+
+# 종료: Ctrl+C
+
+# 검증
+rosbag info lawnmower45_*.bag
+
+
+================================================================
+4. 자율주행
+================================================================
+
+# 잔디깎이 (lawnmower.py 맨 위 STRIPE_LEN/ROW_GAP/NUM_STRIPES만 수정)
+python ~/lawnmower.py
+
+# 사각형 (square.py 맨 위 SIDE_A/SIDE_B/NUM_LAPS만 수정)
+python ~/square.py
+
+# 비상 정지
+rostopic pub -1 /jackaljandi/stop std_msgs/Bool "data: true"
+
+
+================================================================
+5. 토픽 확인 (체크용)
+================================================================
+
+rostopic list                                    # 전체 토픽
+rostopic hz /camera/color/image_raw              # ~30Hz 나오는지
+rostopic hz /camera/aligned_depth_to_color/image_raw
+rostopic hz /camera/imu                          # ~200Hz (D435i 내장)
+rostopic hz /odometry/filtered                   # 자칼 EKF odom
+rostopic echo /cmd_vel                           # cmd_vel 가는지
+
+
+================================================================
+6. 종료 시
+================================================================
+
+# 틸트 0도 복귀 (안전)
+rosservice call /dynamixel_workbench/dynamixel_command \
+  "command: '' id: 1 addr_name: 'Goal_Position' value: 2048"
+
+# 모든 창 Ctrl+C
+
+
+================================================================
+7. 노트북에서 (WSL)
+================================================================
+
+# 자칼 SSH
+ssh jackal@192.168.0.30
+
+# 스크립트 자칼로 보내기 (yaw_helpers.py도 같이!)
+scp /mnt/d/solcam/jackal_scripts/lawnmower.py \
+    /mnt/d/solcam/jackal_scripts/square.py \
+    /mnt/d/solcam/jackal_scripts/yaw_helpers.py \
+    jackal@192.168.0.30:~/
+
+# bag 가져오기
+mkdir -p /mnt/d/jackal_data
+rsync -avh --progress \
+    jackal@192.168.0.30:~/data/ \
+    /mnt/d/jackal_data/
+
+
+================================================================
+8. tmux (창 여러 개)
+================================================================
+
+tmux new -s jackal              # 세션 시작
+Ctrl+b "                        # 가로 분할
+Ctrl+b %                        # 세로 분할
+Ctrl+b 화살표                   # 창 이동
+Ctrl+b d                        # detach
+tmux attach -t jackal           # 다시 붙기
+================================================================

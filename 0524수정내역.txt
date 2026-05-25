@@ -1,0 +1,624 @@
+====================================================
+solcam 패키지 수정 내역 (2026-05-24)
+====================================================
+
+배경:
+  OAK-D S2 온보드 추론(YoloSpatialDetectionNetwork) 전환을 앞두고
+  추적 알고리즘(BYTE association 기반 + 10D Kalman) 코드를 리뷰.
+  원본 ByteTrack을 3D(depth)로 확장하는 과정에서 누적된
+    (A) 함수/타입 이름과 실제 동작의 불일치
+    (B) Kalman z(depth) 노이즈의 차원 불일치 버그
+  를 정리. 동작 변경은 (B) 한 건뿐이며, (A)는 순수 리네이밍(동작 무변경).
+
+  ※ 용어: 이 패키지의 추적기는 더 이상 순수 ByteTrack이 아님.
+    - 1차 연관: Mahalanobis 거리 (DeepSORT식 motion gating)
+    - 2차/미확정 연관: 순수 IoU (원본 ByteTrack 정신 유지)
+    - 상태: 10D [x,y,z,a,h, vx,vy,vz,va,vh] (2D bbox + depth)
+    → "BYTE association 전략을 채택한 3D 확장 추적기"가 정확한 표현.
+
+  작업 전 백업: _bak_0524/ 폴더에 수정 대상 6개 파일 원본 보관.
+  (BYTETracker.cpp/h, KalmanFilter.cpp/h, STrack.cpp/h)
+
+
+----------------------------------------------------
+0. 리뷰 중 "버그로 의심했으나 정상으로 확인된" 항목
+----------------------------------------------------
+  기록 차원에서 남김. 아래 둘은 수정하지 않았음 (이미 올바름).
+
+  - STrack::predict()의 Lost 시 vh 고정:
+    mean_[9]=0 으로 정확히 구현됨. 10D 기준 vh 인덱스(9)도 맞음.
+    Lost 동안 박스 높이가 제멋대로 변하는 것을 막는 표준 처리.
+
+  - linearAssignment 인자 순서:
+    헤더 선언의 파라미터 "이름"이 정의부와 엇갈려 있었으나
+    (헤더: b_unmatched,a_unmatched / 정의: a,b), 호출은 위치 기반이라
+    동작은 정상이었음. 단, 혼동을 유발하므로 헤더 이름만 정의부에
+    맞춰 정합함 (아래 1-D, 동작 무변경).
+
+
+----------------------------------------------------
+1. ByteTrack 함수/타입 리네이밍 [A, 동작 무변경]
+----------------------------------------------------
+문제:
+  3D 확장 과정에서 함수 이름이 실제 동작과 어긋남. 특히 1차 연관
+  함수가 calcIouDistance인데 내부는 IoU가 아니라 Mahalanobis를
+  계산하고 있어, 코드를 읽을 때 "1차도 IoU인가?"로 오해하기 쉬웠음.
+
+수정 내용:
+  파일: include/ByteTrack/BYTETracker.h, src/BYTETracker.cpp
+
+  1-A. calcIouDistance      -> calcMahalanobisCost
+       (1차 연관. 실제로 Mahalanobis 거리를 chi2(11.07)로 정규화한
+        cost. 이름이 동작을 정직하게 반영하도록 변경.)
+
+  1-B. calcIouDistanceOnly  -> calcIouCost
+       (2차/미확정 연관. 순수 IoU 기반 cost = 1 - IoU.
+        "Only"의 모호함 제거.)
+
+  1-C. calcIous             -> calcIouMatrix
+       (IoU 행렬을 만드는 하위 헬퍼. calcIouCost와
+        removeDuplicateStracks에서 호출됨.)
+
+  1-D. linearAssignment 헤더 파라미터 이름 정합:
+       b_unmatched, a_unmatched -> a_unmatched, b_unmatched
+       (정의부 순서와 일치. 위치 기반 호출이라 동작은 그대로.)
+
+  타입(KalmanFilter.h):
+  1-E. Xyazh -> Xyzah
+       (5D 관측 벡터 [x,y,z,a,h]. 기존 이름은 z/a 순서가 뒤바뀐
+        표기였음. 실제 원소 순서(x,y,z,a,h)에 맞춤.
+        cf. Rect.h의 Xyah(4D, cx,cy,a,h)와는 별개 타입 -- 충돌 없음.)
+
+검증:
+  - 옛 이름(calcIouDistance / calcIous / calcIouDistanceOnly / Xyazh)
+    코드 내 잔존: 0건.
+  - 새 이름 출현: calcMahalanobisCost/calcIouCost/calcIouMatrix 12건
+    (선언3 + 정의3 + 호출6), Xyzah 2건.
+  - 호출부 6곳 모두 갱신 확인:
+      1차 매칭 calcMahalanobisCost(strack_pool, det_stracks)
+      2차 매칭 calcIouCost(remain_tracked, det_low)
+      미확정  calcIouCost(non_active, remain_det)
+      중복제거 calcIouCost(a_stracks, b_stracks)
+      calcIouCost 내부 calcIouMatrix(a_rects, b_rects)
+
+  ※ C API(create_tracker / update_tracker / get_lost_tracks /
+    destroy_tracker)와 CObject/CTrackResult 필드명은 외부 경계라
+    의도적으로 건드리지 않음 (tracking_node.cpp가 직접 호출).
+
+
+----------------------------------------------------
+2. Kalman z(depth) 노이즈 차원 불일치 수정 [B, 동작 변경]
+----------------------------------------------------
+파일: src/KalmanFilter.cpp
+
+문제:
+  z(depth, mm)와 vz의 노이즈를 픽셀 높이 h에 비례시키고 있었음.
+    std_vec(2) = std_weight_depth_ * h;   // h = bbox 높이(픽셀)
+  z는 mm 단위인데 노이즈 스케일을 픽셀 양에 묶은 차원 불일치.
+  부작용:
+    - 사람이 멀어져 박스가 작아지면(h down) z 노이즈 추정도 같이 작아짐
+      -> "멀수록 depth를 더 신뢰"하는 거꾸로 된 동작.
+      (실제 stereo depth는 거리가 멀수록 더 부정확함)
+    - std_weight_depth를 0.5까지 키워가며 회전 튐을 잡으려 했으나
+      효과가 h에 휘둘려 직관적으로 먹지 않았던 근본 원인.
+
+수정 내용:
+  z / vz 노이즈를 픽셀 h가 아니라 depth(z) 자체에 비례시킴.
+  z=0 부근에서 노이즈가 0으로 죄어드는 것을 막는 하한 도입.
+
+  파일 상단(익명 namespace)에 헬퍼 추가:
+    constexpr float kDepthScaleFloorMm = 500.0f;  // 하한 0.5m
+    inline float depthNoiseScale(float z) {
+        return std::max(z, kDepthScaleFloorMm);
+    }
+
+  적용 위치(3개 함수, 각 z와 vz):
+    - initiate(): zc = depthNoiseScale(measurement[2])
+        std_vec(2) = 2  * std_weight_depth_ * zc;  // z
+        std_vec(7) = 10 * std_weight_depth_ * zc;  // vz
+    - predict():  zc = depthNoiseScale(mean(2))
+        std_vec(2) = std_weight_depth_ * zc;       // z
+        std_vec(7) = std_weight_depth_ * zc;       // vz
+    - project():  zc = depthNoiseScale(mean(2))
+        R의 z 성분 = std_weight_depth_ * zc;       // 관측 노이즈
+        (project는 gatingDistance가 호출 -> 1차 Mahalanobis에 직접 영향)
+
+  헤더(KalmanFilter.h)는 변경하지 않음 -> ABI/인터페이스 영향 0.
+  (헬퍼는 .cpp 파일 스코프 상수/함수로만 둠)
+
+검증:
+  - std_weight_depth_ * h 형태의 z 노이즈: 0건.
+  - std_weight_depth_ * zc 로 치환된 곳: 5건(z 2 + vz 2 + project z 1).
+  - depthNoiseScale 정의1 + 호출3 = 4건 확인.
+
+*** 중요 -- std_weight_depth 재튜닝 필요 ***
+  이 수정으로 std_weight_depth 파라미터의 "의미"가 바뀜.
+    기존: 노이즈 ~ 픽셀_높이(h) x std_weight_depth
+    변경: 노이즈 ~ depth_mm(z, 하한 500) x std_weight_depth
+
+  같은 값을 쓰면 노이즈 스케일이 크게 달라짐. 예) 사람이 2m일 때
+    기존: h~300px x 0.5 = 150
+    변경: z=2000mm x 0.5 = 1000  (약 6~7배 커짐)
+
+  -> tracking_params.yaml의 std_weight_depth=0.5를 그대로 두면
+    depth를 과도하게 불신해서 응답이 느려짐.
+    등가 시작값: 0.5 -> 0.05 ~ 0.1 부근에서 재튜닝 권장.
+    (h~300, z~1500~2000 가정 시 스케일 6~7배 -> 1/6~1/7로 낮춤)
+
+  재튜닝 절차 제안:
+    1) std_weight_depth=0.07 정도로 시작.
+    2) 사람 정지+회전 시 spatial_z 시계열 관찰(viz_topdown).
+    3) 튐이 크면 값을 키우고(둔감), 응답이 느리면 줄임(민감).
+    하한 kDepthScaleFloorMm(500)도 근거리 위주면 조정 가능.
+
+
+----------------------------------------------------
+3. 빌드 / 검증 안내
+----------------------------------------------------
+  이번 수정은 C++ ByteTrack 라이브러리(libbytetrack.so)와 헤더에
+  한정됨. Python 노드(oak_detector 등)는 건드리지 않음.
+
+  재빌드:
+    cd /media/jw/<DISK>/.../solcam
+    rm -rf build && cmake -S . -B build && cmake --build build -j$(nproc)
+    cd ~/tracking_ws
+    colcon build --packages-select ros2_tracking_node ros2_yolo_oak
+    source install/setup.bash
+
+  ※ 빌드 확인은 실제 PC에서 수행 필요(리뷰 환경엔 ROS2/Eigen 없음).
+    리네이밍은 선언/정의/호출을 grep으로 0건/일치 확인했으므로
+    컴파일 에러는 없을 것으로 예상되나, 최종 검증은 colcon build로.
+
+  되돌리기:
+    문제 시 _bak_0524/ 의 원본 6개 파일로 복원.
+
+
+----------------------------------------------------
+4. 이번에 의도적으로 "하지 않은" 것 (논의 결과)
+----------------------------------------------------
+  아래는 논의했으나 이번 범위에서 제외한 항목. 이유 명시.
+
+  4-1. oak_detector.py를 v2(.blob) 방식으로 재작성:
+       현재 oak_detector.py는 DepthAI v3 신 API(Camera.build,
+       NNModelDescription, pipeline.start)로 작성돼 있으나,
+       config(oak_params.yaml)/README/launch는 v2 .blob 방식 가정이라
+       서로 불일치 -> README대로 실행 시 노드가 안 뜰 가능성 높음.
+       방향은 "v2 .blob로 통일" 합의했으나, Jetson Orin Nano Super에
+       DepthAI 미설치 상태라 설치 버전 확정 후 재작성하기로 보류.
+       (추측 재작성은 검증 불가)
+
+  4-2. 1차 연관에 IoU 게이팅 결합(Mahalanobis gate + IoU cost):
+       원리적으로 옳은 방향이나, 1인 크리에이터 시나리오는 화면에
+       사람 1명이 대부분이라 다인 충돌 시에만 이득. "다인 환경
+       테스트로 ID switch가 실제 관측되면 그때 도입"으로 보류.
+       (측정 전 투입은 복잡도만 증가)
+
+  4-3. 상태벡터 변경(풀 2D+3D 14D / metric 3D 단독):
+       검토 결과 현행 10D(픽셀 2D + depth) 유지가 최적으로 결론.
+         - 14D(픽셀+metric): X=(x-cx)Z/fx 로 묶인 중복 표현 ->
+           공분산 특이성(Cholesky 실패), EKF 필요, 실익 0. 기각.
+         - metric 3D 단독: 운동모델은 우수하나 X,Y가 픽셀x depth로
+           노이즈가 섞여(거리 의존) Mahalanobis 공분산이 어긋남 ->
+           ID 안정성 저하. Re-ID 부재 시스템엔 부적합. 기각.
+       -> 10D는 측정모델 선형 유지 + 노이즈 축 분리(픽셀/depth) +
+          Mahalanobis 정확. 발표 시 이 비교 자체가 설계 근거가 됨.
+
+
+----------------------------------------------------
+5. 후속 과제 (다음 작업 후보)
+----------------------------------------------------
+  [높음]
+   - DepthAI 버전 확정(Jetson에 설치 후 import depthai; __version__)
+     -> oak_detector.py를 v2 .blob로 재작성 + config/README/launch 정합.
+   - oak_detector에 conf_threshold 적용(현재 NN단 신뢰도 필터 누락 -
+     person_only만 적용되어 저신뢰 박스가 전부 통과).
+   - 해상도 정합: tracking_params.yaml image_height 480 -> 640
+     (oak preview와 일치. 안 맞으면 owner 초기화 "화면 중앙"이 어긋남).
+   - std_weight_depth 재튜닝(2번 섹션 참조, 0.5 -> 0.07 부근부터).
+
+  [중간]
+   - oak_detector: stereo depth align(CAM_A) 명시 / 실제 calibration
+     readCalibration()을 preview 해상도로 스케일(현재 FOV 69도 근사).
+   - 디바이스 타임스탬프(getTimestamp) -> ROS time 변환
+     (현재 호스트 수신 시각 사용. yaw 서보 시 지연이 오버슈트 유발 가능).
+   - vz(접근속도) 기반 feed-forward 제어(이미 상태에 있음, follow 단계).
+   - oak_viz: owner 박스를 depth-최근접 휴리스틱 대신 track_id로 표시
+     (/detections에 track_id 동봉 시 정확).
+
+  [낮음 / 발표용]
+   - 트랙 품질 메트릭 로깅(ID switch 수, 평균 track 길이, refind 성공률)
+     -> 4-2(IoU 게이팅) 도입 여부를 데이터로 결정.
+   - is_detected=false 시 마지막 azimuth 부호 발행(search hint)
+     -> yaw가 "그 방향으로 돌며 재포착" 가능. Re-ID 부재 보완책.
+     (follow/제어 단계에서, 출력 계약 변경 동반하므로 그때 함께)
+
+
+----------------------------------------------------
+시스템 목적 메모 (이번 논의에서 확정된 맥락)
+----------------------------------------------------
+  - OAK-D S2는 "촬영"이 아니라 "사용자 위치 센서". 실제 작품 영상은
+    리프트 상단의 별도 촬영 카메라가 담당.
+  - 리프트 상단(~130cm)에 OAK + yaw 모터. 메카넘 휠 + 상단 yaw =
+    2개의 yaw 자유도.
+  - CNN Re-ID 미사용 -> 시야 이탈에 취약. 핵심 방어선은
+    "OAK yaw가 사용자를 항상 프레임 중앙에 유지(visual servoing)".
+  - 추적 노드 출력의 주 소비값: distance, azimuth (제어 입력).
+    spatial_y(높이)도 발행 유지 -> 미디어파이프 손동작 명령 기반
+    리프트 높이 자동조절에 사용 예정.
+  - 주행 모드(잠정): 1=거리/방위 유지 follow, 2=궤도(orbit) 후보,
+    3=몸통 정지 + yaw만 추적(배경 우선) 후보.
+    z축 승강은 주행과 동시 사용 지양(하드웨어 안정성) -> 정지 중 구도용.
+
+====================================================
+
+
+----------------------------------------------------
+6. 추적 품질 메트릭 / 디버깅 로그 추가 [동작 무관, 로깅만]
+----------------------------------------------------
+파일: ros2_tracking_node/src/tracking_node.cpp
+      ros2_tracking_node/config/tracking_params.yaml
+
+배경:
+  추적 노드에 디버깅 로그가 빈약했고, "IoU 게이팅 결합이 실제로
+  필요한지(4-2)" 같은 결정을 데이터로 내릴 근거가 없었음.
+  출력(OwnerPose)은 한 글자도 건드리지 않고 로깅/카운터만 추가.
+
+추가 내용:
+  6-1. 누적 카운터(멤버, 로깅 전용):
+       - m_total_frames_  : 콜백(=프레임) 누적
+       - m_hit_frames_    : owner를 현재 detection에서 직접 찾은 프레임
+       - m_extrap_frames_ : KF lost 외삽으로 메운 프레임
+       - m_lost_frames_   : is_detected=false로 나간 프레임
+       - m_id_switches_   : 재매핑으로 target_id_가 바뀐 횟수
+       - m_perma_lost_    : 영구 lost(재초기화) 발생 횟수
+       - m_speed_caps_    : 속도 clip이 걸린 프레임
+
+  6-2. 이벤트 지점 카운트:
+       - 재매핑 성공 -> m_id_switches_++
+       - 영구 lost   -> m_perma_lost_++
+       - 속도 clip   -> m_speed_caps_++
+       - publish 직전 hit/extrap/lost 분류 (owner_tr / is_detected 기준)
+
+  6-3. per-frame DEBUG 로그:
+       is_detected일 때 owner의 id/dist/azimuth(deg)/z/conf와
+       [HIT] or [KF] 태그를 RCLCPP_DEBUG로. 평소엔 안 찍히고
+       `--ros-args --log-level tracking_node:=debug` 시에만 출력.
+
+  6-4. 주기적 요약 로그(RCLCPP_INFO):
+       metric_log_period 프레임마다 한 줄.
+       예) [metrics] frames=150 hit=92% kf=5% lost=3% |
+           id_switch=1 perma_lost=0 speed_cap=4
+
+  6-5. 신규 파라미터:
+       metric_log_period (기본 150). 0이면 요약 로그 끔.
+       tracking_params.yaml에도 추가.
+
+검증:
+  - 메트릭 멤버 사용처 24건 확인.
+  - 중괄호 균형 46:46 (편집으로 구조 안 깨짐).
+
+활용 가이드:
+  - hit% 가 높고 id_switch 가 낮으면 추적 안정적.
+  - id_switch / perma_lost 가 자주 늘면 -> 4-2(IoU 게이팅 결합) 검토 신호.
+  - speed_cap 이 잦으면 -> max_speed_*_mps 또는 depth 노이즈(2번) 점검.
+  - kf% 가 높으면 detection이 자주 끊긴다는 뜻 -> detector/조명/FPS 점검.
+
+====================================================
+
+
+----------------------------------------------------
+[메모] OAK-D 실기 점검 결과 + 손동작 인식 설계 방향 (2026-05-25)
+----------------------------------------------------
+환경 확정:
+  - 집 PC: Ubuntu 22 + DepthAI 3.6.1 (v3) + OAK-D S2 (USB3 SUPER).
+  - udev 규칙 추가로 권한 해결:
+    /etc/udev/rules.d/80-movidius.rules (idVendor==03e7, MODE=0666).
+  - 방향: v2 .blob -> v3 유지로 변경.
+    이유: pip 기본이 v3, oak_detector.py가 이미 v3 패턴,
+    Jetson 미설치라 처음부터 v3로 통일하기 좋음, blob 수동변환 회피.
+    Jetson에도 나중에 v3 설치 예정.
+
+OAK 하드웨어 점검(test/oak_check/):
+  - RGB 640x400, Depth 640x400 mm(RGB align) 정상.
+  - depth median ~1.44m, 값 범위 정상. EEPROM calib 읽기 가능.
+  - RGB는 auto-exposure 워밍업 필요(첫 프레임 어두움) -> detector에서
+    시작 시 ~30프레임 흘려보내거나 수동노출 고정 고려.
+  - capture_check.py(헤드리스 저장), live_view.py(RGB+depth 뷰어),
+    live_yolo.py(YOLO+spatial 뷰어) 작성해둠.
+
+VPU(shave) 관련 중요 사실:
+  - shave는 OAK 내부 Myriad X 자원(16코어). 호스트(PC/Jetson)와 무관.
+  - 따라서 shave 부족은 Jetson에서 새로 생기는 문제 아님.
+    지금 PC에서 균형 잡으면 Jetson에서도 동일하게 동작.
+  - 테스트 중 "Blob compiled for 8 shaves, only 7 available" 에러 발생.
+    StereoDepth가 코어를 많이 써서 NN에 부족. 임시로 subpixel/extended
+    disparity 꺼서 해결(=depth 노이즈 증가의 원인).
+  - 실전: 모델 변환 시 shave 수를 6 정도로 지정 -> stereo 품질옵션
+    (subpixel/extended) 켜도 공존 가능. 변환 단계에서 잡을 것.
+
+검출 모델 결정:
+  - 기본 COCO YOLOv8-n으로 확정 (커스텀 학습 없음).
+  - 이유: 원거리(3~5m)+다인(2~3명) 데모를 보여줄 계획이라
+    그 환경에선 v8 정확도 우위가 실제로 드러남(1인 근거리면 v6로 충분).
+  - 입력 해상도: 416 부근 절충 예상(원거리=고해상도 유리 vs 다인=FPS 유리).
+    실측으로 균형점 결정.
+  - 테스트는 zoo의 yolov6-nano(512x288)로 파이프라인 검증 완료
+    (~18fps, person conf 0.9+, spatial z 정상). v8-n 변환은 다음 단계.
+  - 변환: yolov8n.pt -> tools.luxonis.com 또는 로컬 -> RVC2 아카이브.
+    이때 shave=6 지정.
+
+raw 검출이 0.1초씩 끊기는 현상:
+  - 정상. 트래킹(ByteTrack+Kalman) 없는 생짜 검출이라 그럼.
+    실전 파이프라인(검출->ByteTrack->tracking_node)이 칼만으로 메워 부드러워짐.
+
+손동작 인식(미디어파이프) 설계 방향 [추적 파이프라인 완성 후 별도 노드로 구현]:
+  - 미디어파이프는 OAK VPU에 못 올림(OpenVINO blob만 가능).
+    호스트(Jetson) CPU/GPU에서 실행. -> Jetson 부하 변수.
+  - 손가락 모양까지 판단하므로 미디어파이프 Hands(21점) 필요.
+  - 부하 절감: 항상 켜지 말고 트리거로 깨우는 2단계(ReID 전략과 동일 발상).
+  - 이중 트리거:
+    1차 "손 들기"(전신 스케일 큰 포즈, 원거리에서도 보임, 가벼움)
+        -> 미디어파이프 Pose 또는 YOLO 박스 종횡비 휴리스틱(미정).
+    2차 미디어파이프 Hands로 따봉 감지 -> 명령 카테고리 진입
+        -> 다양한 제스처는 21점 랜드마크로 추후 확장.
+  - 거리 문제(원거리에서 손가락 작음): 모드1이 거리유지라 사용자가
+    로봇에 다가가는 건 불가. -> 소프트웨어 줌(crop)으로 해결.
+    주의: 저해상도 프리뷰 확대는 무의미. 고해상도 스트림/ISP에서
+    손 영역 ROI crop 해야 함(IMX378 12MP 활용). 손 위치는 1차 트리거에서 확보.
+  - 별도 ROS2 노드. OAK RGB 스트림을 추적 노드와 공유하는 구조 설계 필요.
+
+다음 작업 우선순위:
+  1. oak_detector.py를 v3 + YOLOv8-n으로 정식화(shave=6, conf_threshold,
+     해상도 정합, depth align, 실제 calibration 사용).
+  2. config/README/launch를 v3에 맞춰 정합(4-1 해소).
+  3. 추적 파이프라인 통합 실기 검증 + std_weight_depth 재튜닝.
+  (손동작은 그 이후)
+
+
+----------------------------------------------------
+[실기 검증] OAK-D 실시간 추적 파이프라인 end-to-end 동작 확인 (2026-05-25)
+----------------------------------------------------
+목표: OAK-D로 실시간 추적이 끝에서 끝까지 도는지 확인 (확인용 임시 설정).
+
+빌드 환경 정리(중요, 재사용):
+  - 문제: repo 경로 "/media/jw/로컬 디스크/..."에 공백 있어 colcon의
+    rosidl 메시지 생성이 깨짐(list index out of range). ROS2 알려진 한계.
+  - 해결: 홈에 공백 없는 빌드 워크스페이스 + 심볼릭 링크.
+      ~/solcam_ws/src/ros2_tracking_node -> (실제 repo)/ros2_tracking_node
+      ~/solcam_ws/src/ros2_yolo_oak      -> (실제 repo)/ros2_yolo_oak
+    원본은 로컬 디스크에 그대로(데이터셋·도커·git 안 건드림). 빌드만 홈에서.
+    빌드: cd ~/solcam_ws && colcon build --packages-select ros2_tracking_node ros2_yolo_oak
+  - 절대경로 하드코딩 제거:
+    * ros2_tracking_node/CMakeLists.txt: BYTETRACK_DIR을
+      "/media/jw/로컬 디스크/0511solcam" -> 링크 해제 후 역산.
+      주의: "${CMAKE_CURRENT_SOURCE_DIR}/.." 를 바로 REALPATH하면 ".."가
+      먼저 정규화돼 링크 위치로 잘못 풀림. self를 먼저 REALPATH로 링크
+      해제(_PKG_REAL)한 뒤 거기서 "/..". (2단계)
+    * solcam_silhum.launch.py: solcam_dir 절대경로 -> os.path.realpath(__file__)
+      기준 역산.
+  - libbytetrack.so 재빌드: 지난 세션 C++ 수정(rename, z단위)이 경고 없이
+    컴파일됨. 단 build/ CMakeCache가 옛 경로(3241/...) 기억해 충돌 ->
+    build 디렉터리 재생성 후 cmake .. 재실행으로 해결.
+
+[중요 발견] SpatialDetectionNetwork + 수동 depthAlign 충돌:
+  - 증상: oak_detector가 파이프라인 시작은 되는데 /detections가 한 건도
+    발행 안 됨(qDet.tryGet() 계속 None, "프레임 N" 로그 안 찍힘).
+  - 원인: stereo에 setDepthAlign(CAM_A) + setOutputSize를 수동으로 걸면
+    SpatialDetectionNetwork 내부의 depth 정렬 관리와 충돌해 NN out 큐가 멈춤.
+    격리 테스트(test/oak_check/det_isolate.py)로 확인:
+      align/outputsize 있음 -> det_msgs=0
+      align/outputsize 없음 -> det_msgs=221 (정상)
+  - 교훈: 순수 depth 뷰어(live_view.py)에서는 align 필요하지만,
+    SpatialDetectionNetwork를 쓸 때는 align/outputsize를 빼야 한다.
+    (Spatial NN이 자체적으로 RGB 정렬 관리)
+  - oak_detector.py에서 해당 두 줄 제거 + 주석으로 명시.
+
+oak_detector.py 임시 수정(확인용):
+  - setExtendedDisparity(False), setSubpixel(False): zoo 모델 8-shave라
+    켜면 shave 충돌 크래시. (품질 최적화 시 모델 6-shave 재변환 후 ON)
+  - setConfidenceThreshold(conf_thresh=0.5) 추가(지난 리뷰 누락 보완).
+  - conf_thresh 파라미터 추가.
+  - 원본 백업: _bak_0524/oak_detector.py.0525bak
+
+end-to-end 결과 (모델: zoo yolov6-nano 512x288, 임시):
+  OAK 온보드 YOLO+spatial -> /detections 18.9Hz
+    -> tracking_node(수정 ByteTrack+10D칼만+OwnerTracker) -> /owner_pose 18.8Hz
+  /owner_pose 샘플: is_detected=true, z=0.93m, azimuth=0.22rad(~12.7deg),
+    distance=0.96m, conf=0.95, track_id=2. distance/azimuth 공식 정상.
+  메트릭 로그(우리가 추가): frames=450 hit=94% kf=6% lost=0%
+    id_switch=1 perma_lost=0 speed_cap=31. -> 추적 안정 정량 확인.
+  Speed cap 로그가 z 튐을 실제로 억제 중(depth 노이지한 임시설정이라 자주 걸림).
+
+다음(제대로 수정 단계):
+  1. 모델: yolov8n.pt -> RVC2 아카이브 변환(shave=6) -> extended/subpixel ON 가능.
+  2. std_weight_depth 재튜닝(z단위 수정 반영, 0.5->0.07 부근).
+  3. config(oak_params.yaml)/README/launch를 v3 + 실제 파라미터에 맞춰 정합.
+  4. 실제 calibration(readCalibration) 사용 검토(현재 FOV 69도 근사).
+
+
+----------------------------------------------------
+[제대로 수정] v6-nano 기준 detector 확정 + 종횡비 정합 (2026-05-25)
+----------------------------------------------------
+모델 선택 과정(객관적 판단):
+  - v8로 가려다 로컬 luxonis/tools Docker 변환을 시도 -> ONNX 아카이브는
+    나오지만 RVC2 blob(SUPERBLOB) 컴파일이 안 됨(로컬 tools는 blob 컴파일을
+    HubAI 클라우드에 의존). 그래서 OAK가 "Platform not supported" 거부.
+    -> v8/v10/v11 detection은 zoo에 RVC2 blob 완성품이 없고, 온라인 변환
+       (tools.luxonis.com) 필요.
+  - zoo에 RVC2 blob으로 바로 쓸 수 있는 detection은 사실상 yolov6 계열.
+    v6-large는 RVC4 전용(RVC2 불가) + 58.5M로 너무 무거움 -> 탈락.
+  - 객관적 비교: nano급(v6n mAP35.9 / v8n ~37)은 도토리 키재기. 우리 과제
+    (1인, 1~5m, OAK yaw로 중앙 고정)에선 1~2 mAP 차이 체감 안 됨.
+    진짜 변수는 모델 세대가 아니라 입력 해상도. NN 순수추론은 64fps로 여유
+    많고 병목은 spatial+호스트(우리 측정 ~18fps).
+  -> 결론: 편리(zoo, 변환0) + 검증됨 + 충분한 성능인 v6-nano가 최적.
+     (발표에서 '최신모델' 서사가 꼭 필요하면 YOLO11n 온라인변환은 별도 선택)
+
+해상도 종횡비 정합(박스 밀림 해결):
+  - 증상: viz에서 회색 박스가 실제보다 오른쪽으로 밀려 크게 잡힘.
+  - 원인: preview 640x400(16:10) vs NN 입력 종횡비 불일치. NN이 crop/scale
+    하면서 정규화 좌표가 어긋남. (스테레오/depth 문제 아님)
+  - zoo yolov6-nano 가용 변형: "yolov6-nano"(alias)=512x384,
+    "yolov6-nano:r2-coco-512x288"=512x288. 416 정사각은 zoo에 없음(404).
+  - 해결: preview/tracking_params/NN 모두 512x384로 통일.
+    * oak_detector.py: preview 기본값 640x400 -> 512x384
+    * tracking_params.yaml: image 640x480 -> 512x384
+    (둘이 맞아야 owner 초기화 "화면 중앙" 기준도 정확)
+  -> 밀림 해결 확인.
+
+extended disparity / subpixel = OFF로 확정:
+  - zoo v6-nano도 8-shave 컴파일 -> extended+subpixel 켜면 StereoDepth가
+    코어를 더 써서 NN과 shave 충돌("Blob compiled for 8 shaves, only 7
+    available") -> 크래시. zoo 모델은 shave 재지정 불가.
+  - depth 품질 vs 편리함은 상충: extended 켜려면 6-shave 직접 컴파일 필요
+    (=온라인 변환). 그러나 우리 용도엔 불필요로 판단:
+    * 거리 노이즈는 tracking_node의 speed cap + EMA가 이미 대응(실측 확인).
+    * 필요한 건 cm 정밀도가 아니라 "대략 거리"(1.2m vs 3m 구분).
+  - 기본 depth로도 검출+거리 정상 확인(z=0.67m 등, det 221/12s).
+
+최종 end-to-end 확인 (512x384, extended OFF):
+  /detections 18.9Hz, /owner_pose 19.1Hz, is_detected=true,
+  z~0.97m, azimuth~0.12rad, track_id=1. 박스 밀림 해결. viz 정상.
+
+oak_detector.py 최종 상태:
+  - 모델 yolov6-nano(512x384), preview 512x384
+  - setDepthAlign/setOutputSize 미호출(Spatial NN 충돌 회피, 앞서 기록)
+  - extended/subpixel OFF, conf_threshold(0.5) 적용
+  - 원본 백업 _bak_0524/oak_detector.py.0525bak
+
+남은 마무리:
+  - std_weight_depth 재튜닝(z단위 수정 반영, 0.5->0.07 부근). 실주행 보며.
+  - config(oak_params.yaml)/README를 512x384 + v3에 맞춰 정합.
+  - (선택) 실제 calibration(readCalibration)로 intrinsic 대체.
+
+
+----------------------------------------------------
+[마무리] config/launch/README 정합 + std_weight_depth 재설정 (2026-05-25)
+----------------------------------------------------
+oak_params.yaml 통째 재작성(v2 .blob -> v3):
+  - 제거: blob_path, nn_input_size, num_classes, coordinate_size,
+    conf_threshold(오타키), iou_threshold, anchors, anchor_masks_*,
+    bbox_scale_factor, fps 등 (v3 코드가 안 읽는 옛 키 전부).
+  - v3 코드가 실제 읽는 9개만 남김: model(yolov6-nano), preview_width(512),
+    preview_height(384), person_only, conf_thresh(0.5), depth_lower_mm(100),
+    depth_upper_mm(8000), bbox_scale(0.5), publish_rgb(true).
+
+oak_tracking.launch.py 수정:
+  - blob_path 강제 주입 제거: parameters=[oak_params, {'blob_path':...}]
+    -> parameters=[oak_params]. (v3 detector는 blob_path를 declare 안 함 ->
+    주입하면 파라미터 거부/노드 안 뜸)
+  - blob_arg DeclareLaunchArgument 및 LaunchDescription 목록에서 제거.
+  - 헤더 docstring 갱신(blob_path 실행법 -> 모델명 방식, 640 -> 512x384).
+  - 검증: ros2 launch ros2_yolo_oak oak_tracking.launch.py viz:=false
+    -> oak_detector/tracking_node 정상 기동, /owner_pose 19Hz. config 거부 없음.
+    (단 이전 프로세스가 OAK 점유 중이면 DEVICE_ALREADY_IN_USE -> pkill 후 재실행)
+
+README.md 전면 갱신:
+  - v3/zoo 모델명 방식(blob 변환 불필요), 512x384, ~/solcam_ws 심볼릭링크 빌드,
+    v6-nano 선택 근거, extended/subpixel OFF 이유, 종횡비 일치 주의,
+    트러블슈팅 표(공백경로/shave충돌/depth align/박스밀림/디바이스점유) 추가.
+
+oak_viz.py 검토:
+  - 토픽(/oak/rgb/image_raw,/detections,/owner_pose) 정확, 해상도 독립
+    (frame.shape에서 W,H) -> 512x384 자동 호환. save_video 기능 있음.
+  - owner 박스 강조는 spatial_z 최근접 detection 휴리스틱(OwnerPose에 bbox 없음).
+    다인 환경에선 부정확할 수 있으나 표시용일 뿐 추적엔 무관. 추후 다인 데모 때
+    track_id 기반(viz_owner.py 방식)으로 다듬기 고려.
+
+std_weight_depth 재설정 (tracking_params.yaml):
+  - 0.5 -> 0.07. z단위 버그 수정 반영.
+    수정 전엔 z노이즈가 픽셀높이(h) 비례라 0.5가 맞았으나, 수정 후엔 depth(z)
+    자체 비례(하한 500mm)라 0.5는 과도(1m에서 ±0.5m 둔감).
+  - 시작값일 뿐, 실주행 튜닝 필요. 절차 주석에 명시:
+    사람 정지+회전 시 spatial_z 시계열(viz_topdown) 관찰 -> 튀면 키우고
+    응답 느리면 줄임.
+  - image_width/height도 512/384로 정합(앞서 종횡비 작업에서).
+
+남은 향후 과제(낮은 우선순위):
+  - std_weight_depth 실주행 튜닝(로봇 굴리면서).
+  - 실제 calibration(readCalibration)로 CameraInfo intrinsic 대체
+    (현재 FOV 69도 근사).
+  - 디바이스 타임스탬프(getTimestamp) -> ROS time (현재 호스트 수신시각).
+  - 손동작 노드(미디어파이프, 앞서 설계 메모 참조).
+
+
+----------------------------------------------------
+[0525] 오너 스위칭 방지: 동적 재매핑 거리 + 다인 데이터셋 검증 + viz 점 표시
+----------------------------------------------------
+
+■ 문제 (다인 데이터셋 viz로 관찰)
+  TUM freiburg3_walking_xyz(두 사람 영상)로 추적 시각화 → 주인(초록박스)이
+  잠깐 깜빡인 사이 옆 사람으로 오너가 넘어가는 스위칭 관측.
+  원인 진단(tracking_node.cpp 정독):
+   - 재매핑(4번 블록)이 KF외삽(5번 블록)보다 먼저 실행됨.
+   - 기존 재매핑은 고정 거리(max_reassign_dist_px=300)로, grace(10f≈0.5s) 넘으면
+     "owner_last에서 가장 가까운 트랙"으로 무조건 갈아탐. 주인 깜빡인 사이 옆사람이
+     300px 안에 있으면 그 사람한테 ID를 줘버림.
+
+■ 해결: 동적 재매핑 거리 (사용자 제안 채택)
+  재매핑 허용 거리를 lost_count에 비례해 점점 키운다. 상한 없음.
+    eff_dist = reassign_base_dist_px + reassign_growth_px_per_frame*(lost_count - grace_frames)
+   - 주인 막 놓침(lost 작음): eff 작음 → 옆사람 거부 → KF 외삽이 메움(스위칭 방지).
+   - 긴 가림(lost 큼): eff 큼 → 멀어진 진짜 주인도 재매핑 허용(긴 가림 회복).
+  [근거] base/growth는 감이 아니라 측정으로 정함:
+    freiburg3_walking에서 YOLO 검출 직접 분석(/tmp/measure_dets.py, analyze_dets.py):
+     · 두 사람 사이 거리: 25%=292px, median=390px (100px 이내로 붙는 건 4%뿐).
+     · 검출 완전끊김(0명) 지속: 대부분 1f, 가끔 12/19/31/63f.
+    → 처음엔 base=120/growth=10로 했으나, viz 관찰 시 두 사람이 가까운 순간
+      (39/74/111px 재매핑 발생) 스위칭이 남아 사용자 요청으로 더 좁힘:
+      ★현재값: reassign_base_dist_px=50, reassign_growth_px_per_frame=5.
+      (50px≈어깨너비. 깜빡임 직후 옆사람 차단, 천천히 넓어짐.)
+  [코드 변경] tracking_node.cpp:
+   - declare_parameter에 reassign_base_dist_px(50), reassign_growth_px_per_frame(5) 추가.
+     max_reassign_dist_px(300)는 [deprecated] 표기, 미사용(호환 위해 남김).
+   - 멤버변수 reassign_base_dist_px_, reassign_growth_px_per_frame_ 추가.
+   - 4번 재매핑 블록: 고정 max_reassign_dist_px_ → eff_reassign_dist 동적 계산으로 교체.
+     로그도 "거리 Npx ≤ 허용 Mpx, lost K프레임" 형태로 갱신.
+  [한계 명시] 순수 위치(픽셀거리) 기반이라 Re-ID 없음 → 옆사람이 진짜 주인 위치에
+    가까이 오면 거리로는 구분 불가, 스위칭 원리적으로 0 불가. 파라미터로 줄일 뿐.
+    근본 해결은 OAK yaw로 주인 중앙 고정 또는 경량 Re-ID(후속 과제).
+
+■ 다인 데이터셋 검증 파이프라인 (재활용 자산으로 구성, 신규제작 최소)
+  데이터셋: /media/jw/로컬 디스크/mot_test/rgbd_dataset_freiburg3_walking_xyz
+    (TUM RGB-D, 두 사람 walking, RGB859/depth833. depth 포함이라 우리 파이프라인 적합.)
+    associations.txt 없어서 /tmp/mk_assoc.py로 생성(827쌍, 0.02s 매칭).
+  파이프라인: tum_publisher(RGB+depth+camera_info, fx=535.4 fy=539.2 cx=320.1 cy=247.6)
+    → ros2_yolo_d435i yolo_detector(GPU, yolov8n.pt) → tracking_node(640x480) → viz_dataset.py
+  토픽 정합: /camera/color/image_raw, /camera/aligned_depth_to_color/image_raw,
+    /camera/color/camera_info, /detections, /owner_pose — 전부 맞물림.
+  ★oak_detector는 OAK 전용이라 영상파일엔 못 씀 → d435i detector 재활용이 핵심.
+  ros2_yolo_d435i를 ~/solcam_ws/src에 심볼릭 링크 + colcon 빌드.
+  헬퍼: ~/run_dataset_track.sh (3노드 백그라운드. tum 프리로드 ~20초).
+        ~/run_metric_test.sh (viz 없이 메트릭만, 자동종료).
+  종료: pkill -f tum_publisher; pkill -f yolo_detector; pkill -f tracking_node
+  ★주의: 헬퍼 실행 후 프롬프트 바로 돌아옴(백그라운드) → 두 번 누르면 영상 2개 겹침.
+    pkill로 안 죽으면 pgrep로 PID 확인 후 kill -9. tum_publisher --loop는 계속 살아있음.
+
+■ 메트릭 결과 (동적거리 base=120 시점, 1500프레임≈2바퀴)
+  hit 44~56% / kf 44~54% / lost 1~2% / perma_lost 0 / id_switch 단 3회.
+  재매핑된 경우 전부 가까운 거리(39/74/111px). "382px>허용140px 거부→KF외삽 유지" 로그 확인.
+  → 동적 거리가 의도대로 작동(멀면 거부, KF외삽으로 버팀). base 50으로 더 조임.
+
+■ viz_dataset.py 개선
+  1) 재매핑 허용 범위 원(얇은 빨간선): owner 박스 마지막 위치 중심, lost_frames로
+     반지름 = base+growth*(lost-grace) 그림. (RE_BASE=50, RE_GROWTH=5, tracking_node와 맞춤)
+     viz 자체 lost 카운트라 실제와 몇 프레임 오차 가능(근사).
+  2) ★실제 발행 owner 위치를 점으로 표시 (camera_info 구독해 spatial→픽셀 역투영):
+       px = cx + spatial_x*fx/spatial_z,  py = cy + spatial_y*fy/spatial_z
+     노란 점=HIT, 자홍 점=KF외삽(confidence≤0.35로 추정). 위치값은 100% 실제 발행값.
+  [중요 교훈] 초록 박스는 휴리스틱(spatial_z 최근접 detection)이라 두 사람 depth 비슷하면
+    박스만 두 사람 사이를 튐 → "추적 흔들림"으로 오해 유발. 실제 track_id는 안정적이었음.
+    → 점(역투영)으로 진단해 "viz 표시 문제지 추적 버그 아님" 확정. 점을 신뢰할 것.
+  [후속 개선안(미구현)] 근본 해결은 OwnerPose에 owner 픽셀좌표/bbox 필드 추가해서
+    viz가 추측 없이 정확한 박스 그리게 하는 것(메시지 정의 변경+빌드 필요).
+
+■ 측정/분석 스크립트 위치
+  /tmp/measure_dets.py(데이터셋 YOLO 직접 검출→dets.pkl), /tmp/analyze_dets.py(거리/끊김 통계),
+  /tmp/tune_params.py(파라미터 곡선 평가), /tmp/verify_dynamic.py(동적거리 합성검증).
+  test/oak_check/viz_dataset.py(데이터셋 viz, 원+점 표시).
+
+■ PENDING (다음 세션)
+  - 현재 base=50/growth=5로 viz 재확인 필요(스위칭 줄었는지, 주인 못따라가 LOST 길어지진 않는지).
+  - 파라미터 균형 안 맞으면: 스위칭 남으면 base↓, 주인놓침 길면 base↑ 또는 growth↑.
+  - 근본개선: OwnerPose에 픽셀좌표 추가(viz 정확도) / 경량 Re-ID 또는 OAK yaw 중앙고정(스위칭 근절).
+  - OAK 실주행: 동적거리 파라미터는 프레임 기준이라 ~19fps OAK에선 더 천천히 풀림(안전 방향). 실측 튜닝.

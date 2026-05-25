@@ -21,6 +21,9 @@ else()
   message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++17 support. Please use a different C++ compiler.")
 endif()
 
+# FetchContent: Eigen3 시스템에 없을 경우 자동 다운로드
+include(FetchContent)
+
 set(EIGEN_VERSION 3.3)
 find_package(Eigen3 ${EIGEN_VERSION} QUIET)
 if(NOT EIGEN3_FOUND)
@@ -40,6 +43,7 @@ add_library(${PROJECT_NAME} SHARED
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Object.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Rect.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/STrack.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/tracker_c_api.cpp  # Python ctypes C 인터페이스
   )
 target_include_directories(${PROJECT_NAME} PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include

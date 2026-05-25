@@ -1,0 +1,390 @@
+====================================================
+solcam 패키지 수정 내역 (2026-05-11)
+====================================================
+
+배경:
+  ROS2 통합 노드(yolo_d435i / tracking_node / follow_node)의
+  정합성 검증 결과, 2026-05-08 수정(0508수정내역.txt)의
+  핵심 효과가 런타임에서 무효화되는 Critical 이슈 2건 발견.
+  본 수정은 해당 두 건(C1, C2)을 정리한 것.
+
+
+----------------------------------------------------
+1. ros2_tracking_node/config/tracking_params.yaml  [Critical]
+----------------------------------------------------
+문제:
+  tracking_node.cpp는 0508 수정으로 새 기본값
+    track_buffer=60, track_thresh=0.45, match_thresh=0.85,
+    std_weight_depth=0.125
+  를 declare하고, OwnerTracker 파라미터로
+    grace_frames=10, max_reassign_dist_px=300.0
+  을 새로 declare함.
+
+  그러나 launch가 로드하는 이 YAML이 옛값
+    track_buffer=30, track_thresh=0.5, match_thresh=0.8,
+    std_weight_depth=0.05
+  로 덮어쓰고 있었고,
+  제거된 파라미터 max_lost_frames(30)는 그대로 남아 unused,
+  새 파라미터 grace_frames / max_reassign_dist_px는 누락.
+
+  → 0508 수정의 핵심(2초 Lost 유지, 뒷모습 ID 스위칭 감소,
+    grace 대기 후 nearest-to-last 재매핑)이 모두 무효화됨.
+
+수정 내용:
+  - track_buffer       : 30   → 60     (Lost 트랙 2초 유지)
+  - track_thresh       : 0.5  → 0.45
+  - match_thresh       : 0.8  → 0.85
+  - std_weight_depth   : 0.05 → 0.125  (1/8, 뒷모습 관대)
+  - max_lost_frames    : 항목 삭제 (코드에서 제거됨)
+  - grace_frames       : 10     신규 추가
+  - max_reassign_dist_px: 300.0 신규 추가
+  - image_width/height 주석을 OAK-D → D435i 기준으로 정정
+
+
+----------------------------------------------------
+2. ros2_follow_node/launch/follow_pipeline.launch.py  [Critical]
+----------------------------------------------------
+문제:
+  tracking_node에 declare되지 않은 파라미터
+    'max_lost_frames': 30
+  을 여전히 inline parameters로 주입.
+  ROS2(rclcpp)는 declare되지 않은 파라미터를 받으면
+  ParameterNotDeclaredException으로 노드 시작이 실패할 수 있음
+  (allow_undeclared_parameters 미설정이 기본값).
+
+수정 위치) tracking_node 항목의 parameters
+  변경 전:
+    parameters=[{
+        'frame_rate': 30,
+        'image_width': 640,
+        'image_height': 480,
+        'max_lost_frames': 30,
+    }],
+  변경 후:
+    parameters=[{
+        'frame_rate': 30,
+        'image_width': 640,
+        'image_height': 480,
+        # 0508 수정: max_lost_frames 제거
+        # OwnerTracker 동작은 grace_frames + max_reassign_dist_px로 제어
+        'grace_frames': 10,
+        'max_reassign_dist_px': 300.0,
+    }],
+
+
+----------------------------------------------------
+검증 결과 보고서에서 남은 후속 과제 (이번 커밋 미적용)
+----------------------------------------------------
+[Critical]
+  C3. ros2_tracking_node/CMakeLists.txt 가 libbytetrack.so를
+      ../build 절대상대경로로 직접 링크하고 RPATH 미설정.
+      → ByteTrack를 ament 패키지화하거나 INSTALL_RPATH 설정 필요.
+
+[High]
+  H1. cam_info_sub_ QoS를 SensorDataQoS()로 변경
+      (RealSense BEST_EFFORT publisher와 호환).
+  H2. intrinsic 미수신 시 fallback 좌표(정규화)는
+      m 단위가 아니므로 is_detected=false로 publish하도록 수정.
+  H3. yolo_detector ↔ RealSense 이미지 QoS 통일.
+  H4. find_nearest_to_last() 함수 첫 줄에 n<=0 가드 추가.
+
+[Medium]
+  M1. match_track_to_det_depth IoU=0 케이스에서
+      best_depth=0 반환 → is_detected=false로 처리.
+  M2. follow_pipeline.launch.py에 RealSense 노드 include 또는
+      README에 별도 실행 안내 추가.
+  M3. image_width/height 와 카메라 실제 해상도 launch에서 정렬.
+  M4. follow_params.yaml 에 mecanum_driver 노드 섹션 추가.
+  M5. follow_node가 OwnerPose의 azimuth/distance 직접 사용.
+
+====================================================
+
+
+====================================================
+0511 추가 작업 — 데이터셋 검증 + 진동/lag 잡기
+====================================================
+
+배경:
+  위 C1/C2 수정 후 ttest2_tum 데이터셋(D435i로 찍은 TUM 형식)으로
+  풀 파이프라인 검증 시도. 그 과정에서 발견한 추가 critical 이슈
+  (C3, H1, H2, H4) 처리 + 진동/lag 원인 추적해서 잡음.
+  H1/H2/H4/C3는 위 후속과제 목록에 있던 것들이며 이번에 모두 적용.
+
+
+----------------------------------------------------
+1. tracking_node.cpp — H1 [Critical, 후속과제 H1 해결]
+----------------------------------------------------
+문제:
+  cam_info_sub_가 디폴트 QoS(RELIABLE)로 구독.
+  RealSense는 BEST_EFFORT로 publish하므로 QoS 호환 안 돼서
+  콜백이 한 번도 안 불림 → intrinsic_ready_가 영원히 false →
+  fallback 좌표(정규화 -1~1)로 publish됨.
+
+수정:
+  cam_info_sub_ = create_subscription<CameraInfo>(
+      "/camera/color/camera_info", rclcpp::SensorDataQoS(),
+      ...);
+
+검증:
+  ros2 topic pub --qos-reliability best_effort 로 camera_info 한 발 쏨.
+  → "Camera intrinsic: fx=600.0 fy=600.0 cx=320.0 cy=240.0" 로그 확인.
+
+
+----------------------------------------------------
+2. tracking_node.cpp — H2 [Critical, 후속과제 H2 해결]
+----------------------------------------------------
+문제:
+  intrinsic 미수신 또는 depth invalid 시 fallback으로
+  정규화 좌표(-1~1)를 m 단위인 척 publish.
+  follow_node가 그 값을 그대로 atan2/sqrt에 넣어서 azimuth/distance
+  잘못 계산 → 로봇이 엉뚱한 방향으로 움직일 수 있음.
+
+수정:
+  fallback 분기 자체 제거. intrinsic 없거나 depth_mm < 1.0이면
+  is_detected=false로 publish하고 RCLCPP_WARN_THROTTLE 경고.
+
+부수 효과:
+  M1 (IoU=0 케이스 best_depth=0 반환) 도 이걸로 자동 해결.
+
+
+----------------------------------------------------
+3. tracking_node.cpp — H4 [후속과제 H4 해결]
+----------------------------------------------------
+수정:
+  find_nearest_to_last() 첫 줄에 `if (n <= 0) return -1;` 가드 추가.
+  호출부에서 n_tracks > 0 체크하긴 했지만 한 군데라도 빠지면 SEGV
+  나는 구조였음.
+
+
+----------------------------------------------------
+4. ros2_tracking_node/CMakeLists.txt — C3 [Critical, 후속과제 C3 해결]
+----------------------------------------------------
+문제:
+  libbytetrack.so를 ../build 절대상대경로로 직접 링크하고 RPATH 미설정.
+  → colcon install된 tracking_node 실행 시
+    "error while loading shared libraries: libbytetrack.so" 발생.
+
+수정:
+  set_target_properties(tracking_node PROPERTIES
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_RPATH "${BYTETRACK_DIR}/build"
+  )
+  ByteTrack을 ament 패키지화하는 게 근본이지만 일단 이걸로 동작.
+
+
+----------------------------------------------------
+5. ByteTrack lost 풀 외부 노출 [기능 추가]
+----------------------------------------------------
+배경:
+  주인 lost 0.2초씩 깜박이는 현상 발견.
+  원인: BYTETracker::update()는 tracked_stracks_만 반환,
+  lost_stracks_는 private이라 밖에서 못 봄. 그래서 lost 동안
+  ByteTrack 내부 KF가 위치 예측 유지 중인데도 tracking_node는
+  is_detected=false로 publish하고 있었음.
+
+수정 파일:
+  - include/ByteTrack/BYTETracker.h
+    public 메서드 `getLostStracks()` const ref getter 추가.
+  - include/ByteTrack/tracker_c_api.h
+    CTrackResult에 `depth` 필드 추가.
+    `get_lost_tracks()` C 함수 선언.
+  - src/tracker_c_api.cpp
+    update_tracker가 depth 채우게 수정.
+    get_lost_tracks 구현: lost STrack의 mean_[0..4] (cx,cy,z,a,h)에서
+    bbox 직접 재구성 (rect_은 markAsLost 시점 값이라 사용 불가).
+  - ros2_tracking_node/src/tracking_node.cpp
+    publish 직전 분기 추가:
+      owner_tr 못 찾고 target 살아있으면 lost 풀 조회 →
+      KF 외삽 spatial 사용 + is_detected=true + confidence 0.5×.
+    track_buffer=60 동안만 가능, 그 후엔 BYTETracker가 lost에서 제거.
+
+빌드:
+  cd /media/jw/로컬 디스크/3241/capstone/solcam
+  rm -rf build && cmake -S . -B build && cmake --build build -j$(nproc)
+  cd ~/tracking_ws
+  colcon build --packages-select ros2_tracking_node
+
+
+----------------------------------------------------
+6. 진동/lag 추적 — 5단계 누적 적용
+----------------------------------------------------
+증상:
+  데이터셋 재생 시 viz_topdown의 주인 위치가 심하게 튐.
+  특히 사람이 회전(돌아설 때)할 때 spatial_z가 ±1m 점프.
+
+근본 원인 분석:
+  - 사람 회전 시 bbox 안 픽셀 분포 바뀜 (정면=가슴/배 → 옆/뒤=어깨/팔+배경)
+  - bbox 중앙 patch에서 depth median 뽑으면 배경 픽셀이 잡혀서
+    측정 depth가 사람 거리 대신 배경 거리로 jump.
+  - ByteTrack KF는 z 측정 1D만 받아서 outlier 그대로 따라감.
+
+조치 (효과 큰 순서):
+
+  6-1. yolo_detector depth 추출 강화
+       - depth_patch_ratio: 0.4 → 0.15 (좁게, 배경 침투 차단)
+       - depth_near_percentile 신규 도입: 20.0
+         valid 분포에서 가까운 N%만 골라서 median.
+         사람이 patch 안에서 가장 가까운 픽셀을 차지한다는 가정.
+
+  6-2. tracking_node 속도 기반 outlier rejection
+       - 단순 jump rejection (절대 거리 점프) 대신 속도 cap으로 교체.
+       - max_speed_xy_mps: 2.0, max_speed_z_mps: 2.0
+         걷는 사람 ~1.5m/s 기준, 여유 두고 2.0.
+       - 측정값을 직전 평탄화값 기준으로 |Δ|/dt > max_speed면
+         max_speed*dt로 clip.
+       - clip 발생 시 "Speed cap" INFO 로그 (1초당 1회 throttle).
+
+  6-3. EMA 평탄화
+       - publish 직전 1차 EMA. ema_alpha_xy=0.35, ema_alpha_z=0.15.
+       - track_id 바뀌어도 시드 리셋 안 함 (재매핑 시 점프 방지).
+       - is_detected=false 프레임에도 EMA 상태 유지, 30프레임 lost
+         지속 시에만 리셋.
+
+  6-4. ByteTrack KF 노이즈 가중치 (yaml)
+       - std_weight_position: 0.05 → 0.1 (2배)
+       - std_weight_velocity: 0.00625 → 0.0125 (2배)
+       - std_weight_depth:    0.125 → 0.5 (4배)
+         사람 회전 시 depth 변동에 ByteTrack KF가 둔감하게.
+
+  6-5. ByteTrack ID 유지력 강화 (yaml)
+       - match_thresh: 0.85 → 0.95
+         같은 트랙 ID를 더 오래 유지 → 재매핑 빈도 감소.
+
+검증 (50프레임 spatial_z 시계열):
+  이전: 1.90→1.99→2.06→1.96→...→3.85(점프)→3.12→2.83  ±10cm 진동
+        + 1m 점프 다발
+  이후: 1.59→1.60→1.61→1.62→...→1.74               ±2cm 안정
+        점프 0회, 추세 깔끔
+
+새 파라미터 (ros2_tracking_node/config/tracking_params.yaml):
+  max_speed_xy_mps:       2.0
+  max_speed_z_mps:        2.0
+  ema_alpha_xy:           0.35
+  ema_alpha_z:            0.15
+  (옛 depth_jump_threshold_m 제거)
+
+
+----------------------------------------------------
+7. yolo_detector — GPU 강제 [성능]
+----------------------------------------------------
+문제:
+  CUDA 가능 환경인데도 ultralytics가 CPU로 추론.
+  /detections rate 1.6Hz까지 떨어져서 KF가 외삽만 하다가
+  detection 들어올 때마다 점프 → 진동의 큰 원인 중 하나.
+
+수정 (yolo_detector.py):
+  import torch
+  if torch.cuda.is_available():
+      self.model.to('cuda')
+      self.device = 'cuda'
+  predict() 호출에 device=self.device 명시 (호출마다 cpu로 떨어짐 방지).
+
+효과:
+  /detections 1.6Hz → ~30Hz.
+
+
+----------------------------------------------------
+8. tum_publisher — 메모리 프리로드 [성능]
+----------------------------------------------------
+문제:
+  매 tick마다 외장 HDD에서 cv2.imread 두 번 (RGB + depth PNG).
+  외장 디스크 I/O가 보틀넥. tum_publisher CPU 45% 점유.
+
+수정 (tum_publisher.py):
+  __init__에서 모든 프레임 한 번에 메모리 로드 (depth scale 변환도
+  미리). tick()에선 캐시에서 바로 꺼냄.
+  893 × ~1.4MB = ~1.3GB RAM 사용 (15GB 중 충분).
+
+효과:
+  tum_publisher CPU 45% → 20%.
+  yolo_detector도 디스크 I/O 경쟁에서 풀려서 안정적인 30Hz.
+
+
+----------------------------------------------------
+9. solcam_silhum.launch.py [신규 — 인프라]
+----------------------------------------------------
+배경:
+  터미널 5개씩 띄우는 거 번거로움.
+
+신규 launch 파일:
+  ros2_tracking_node/launch/solcam_silhum.launch.py
+
+띄우는 노드:
+  1. tum_publisher_proc  : TUM 폴더 → /camera/* 토픽
+  2. yolo_detector       : RGB+Depth → /detections
+  3. tracking_node       : tracking_params.yaml 자동 적용
+  4. viz_overlay_proc    : RGB + bbox + 마커 → /viz/image
+  5. viz_topdown_proc    : 주인 평면도 → /viz/topdown
+  (follow_node, mecanum_driver는 별도 launch.
+   rqt는 사용자가 별도로 띄움)
+
+인자:
+  tum_dir   (기본: /media/jw/로컬 디스크/datasets/ttest2_tum)
+  rate      (기본: 30.0)
+  loop      (기본: true. false면 한 번만 재생 후 종료)
+
+OpaqueFunction으로 LaunchConfiguration 즉시 평가하여 cmd 인자 구성
+(loop=false 시 --loop 플래그 빼고 ExecuteProcess 실행).
+
+
+----------------------------------------------------
+10. 부산물 — viz_topdown.py [신규]
+----------------------------------------------------
+주인 위치를 위에서 내려다본 평면도로 시각화.
+  - 카메라 = 화면 하단 중앙 원점
+  - 거리 링 (1~5m), D435i FOV 가이드 (69°), trail 30프레임
+  - HUD: id, dist, azimuth, x/z, conf, DET/KF 태그
+  - confidence < 0.4면 KF 외삽으로 추정 (주황색 표시)
+  - 30Hz timer로 publish (detection rate와 무관하게 화면 부드럽게)
+  - publish: /viz/topdown
+
+
+----------------------------------------------------
+TUM 데이터셋 변환 메모
+----------------------------------------------------
+ttest2.bag (ROS1 bag, 1.4GB) → ROS2 bag 변환:
+  rosbags-convert --src ttest2.bag --dst ttest2_ros2
+
+  → metadata.yaml version 9로 생성됨 (humble은 6 기대).
+    "yaml-cpp: error at line 25, column 29: bad conversion" 발생.
+    version: 6 으로 바꾸고 type_description_hash 줄 다 지워봤지만
+    humble과 더 깊은 스키마 차이 있어서 결국 재생 실패.
+
+대안 채택:
+  ttest2_tum/ (TUM 형식, associations.txt + rgb/ + depth/) 사용.
+  tum_publisher.py 자체 작성 (depth × 0.2 = mm 변환, BEST_EFFORT QoS).
+
+
+----------------------------------------------------
+이번 세션 후 후속과제 상태 업데이트
+----------------------------------------------------
+[원본 후속과제]
+  C3 ✅ 해결 (위 4번)
+  H1 ✅ 해결 (위 1번)
+  H2 ✅ 해결 (위 2번)
+  H3 - yolo_detector ↔ RealSense 이미지 QoS는 yolo_detector가 이미
+       BEST_EFFORT로 받고 있어서 사실상 OK (재확인 필요).
+  H4 ✅ 해결 (위 3번)
+  M1 ✅ H2 수정으로 자동 해결
+  M2 - 미해결 (follow_pipeline에 RealSense 노드 include)
+  M3 - 미해결
+  M4 - 미해결 (follow_params.yaml에 mecanum_driver 섹션)
+  M5 - 미해결 (follow_node가 OwnerPose의 azimuth/distance 직접 사용)
+
+[새로 발견/추가된 항목]
+  N1. viz_overlay sync queue/slop 늘림 (queue 10→30, slop 0.1→0.3,
+      detection QoS BEST_EFFORT로 통일). 이미 적용.
+  N2. CLAUDE.md가 OAK-D 기준으로 적혀있음. 현재 D435i 데이터셋 + 추후
+      OAK-D S2 전환 예정. 갱신 필요.
+  N3. 데이터셋 루프 경계(끝→시작)에서 lost 11프레임 + 재매핑 다발.
+      실제 카메라에선 안 일어나는 인공물. 무시 가능.
+
+[다음 작업 후보]
+  - mecanum_driver / follow_node 통합 launch (M2/M4)
+  - follow_node가 OwnerPose의 azimuth/distance 직접 사용 (M5)
+  - OAK-D S2 전환 시 yolo_detector를 depthai_ros_driver
+    SpatialDetectionArray 구독자로 갈아엎기
+    (tracking_node, follow_node는 그대로 사용 가능)
+
+
+====================================================

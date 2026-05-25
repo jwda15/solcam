@@ -1,0 +1,203 @@
+﻿================================================================
+            내일 명령어 — 복붙 순서대로
+================================================================
+
+[자칼: ssh jackal@192.168.0.30 / Ubuntu 18.04 + Melodic]
+
+
+────────────────────────────────────────────────────────────────
+0. 노트북에서 — 스크립트 자칼로 보내기 (현장 가기 전 1회)
+────────────────────────────────────────────────────────────────
+
+# 자칼로 스크립트 3개 전송
+scp /mnt/d/solcam/jackal_scripts/lawnmower.py \
+    /mnt/d/solcam/jackal_scripts/square.py \
+    /mnt/d/solcam/jackal_scripts/yaw_helpers.py \
+    jackal@192.168.0.30:~/
+
+# import 테스트 (자칼 SSH 붙어서)
+python -c "from yaw_helpers import YawTracker; print('OK')"
+
+
+────────────────────────────────────────────────────────────────
+1. SSH + tmux 시작
+────────────────────────────────────────────────────────────────
+
+# 노트북에서 SSH
+ssh jackal@192.168.0.30
+
+# tmux 세션 (SSH 끊겨도 살아있음)
+tmux new -s jackal
+
+# 분할:  Ctrl+b "  (가로) / Ctrl+b %  (세로)
+# 이동:  Ctrl+b 화살표
+# 나가기:Ctrl+b d → 자칼은 계속 돔
+# 재접속:tmux attach -t jackal
+
+
+────────────────────────────────────────────────────────────────
+2. [창1] 카메라 켜기
+────────────────────────────────────────────────────────────────
+
+source /opt/ros/melodic/setup.bash
+
+roslaunch realsense2_camera rs_camera.launch \
+  align_depth:=true \
+  enable_gyro:=true enable_accel:=true \
+  unite_imu_method:=linear_interpolation
+
+
+────────────────────────────────────────────────────────────────
+3. [창2] 토픽 hz 확인 (정상이면 다음 단계)
+────────────────────────────────────────────────────────────────
+
+source /opt/ros/melodic/setup.bash
+
+rostopic hz /camera/color/image_raw                   # ~30Hz
+rostopic hz /camera/aligned_depth_to_color/image_raw  # ~30Hz
+rostopic hz /camera/imu                               # ~200Hz
+rostopic hz /odometry/filtered                        # 자칼 EKF
+
+
+────────────────────────────────────────────────────────────────
+4. [창3] Dynamixel workbench 띄우기
+────────────────────────────────────────────────────────────────
+
+source /opt/ros/melodic/setup.bash
+source ~/catkin_ws/devel/setup.bash
+
+roslaunch dynamixel_workbench_controllers dynamixel_controllers.launch
+
+
+────────────────────────────────────────────────────────────────
+5. [창4] 틸트 각도 세팅
+────────────────────────────────────────────────────────────────
+
+source /opt/ros/melodic/setup.bash
+
+# 45도 (저텍스처 메인)
+rosservice call /dynamixel_workbench/dynamixel_command \
+  "command: '' id: 1 addr_name: 'Goal_Position' value: 1536"
+
+# 다른 각도 — value만 바꿔
+#   0도(정면)  2048
+#   30도       1741
+#   45도       1536
+#   50도       1587
+#   60도       1331
+#   90도(수직) 1024
+
+
+────────────────────────────────────────────────────────────────
+6. [창5] rosbag 녹화 시작
+────────────────────────────────────────────────────────────────
+
+source /opt/ros/melodic/setup.bash
+mkdir -p ~/data/$(date +%Y%m%d) && cd ~/data/$(date +%Y%m%d)
+
+# 파일명에 패턴_각도 표기 권장: square45_, lawnmower90_ 등
+rosbag record -O square45_$(date +%H%M%S).bag \
+  /camera/color/image_raw \
+  /camera/color/camera_info \
+  /camera/aligned_depth_to_color/image_raw \
+  /camera/aligned_depth_to_color/camera_info \
+  /camera/imu \
+  /camera/imu_info \
+  /camera/extrinsics/depth_to_color \
+  /odometry/filtered \
+  /tf /tf_static
+
+
+────────────────────────────────────────────────────────────────
+7. [창6] 자율주행 — 짧게 테스트 → 본실행
+────────────────────────────────────────────────────────────────
+
+source /opt/ros/melodic/setup.bash
+
+# 처음엔 짧게 (SIDE_A=1.0, NUM_LAPS=1로 수정 후)
+nano ~/square.py        # 맨 위 SIDE_A/SIDE_B/NUM_LAPS 수정
+python ~/square.py
+
+# 잘 돌면 원래 크기로 본실행
+nano ~/square.py        # 원래 값으로
+python ~/square.py
+
+# 잔디깎이
+nano ~/lawnmower.py     # STRIPE_LEN/ROW_GAP/NUM_STRIPES 수정
+python ~/lawnmower.py
+
+
+────────────────────────────────────────────────────────────────
+8. 비상 정지 (긴급)
+────────────────────────────────────────────────────────────────
+
+# 1순위 — 자칼 본체 빨간 E-stop 버튼
+
+# 2순위 — 토픽
+rostopic pub -1 /jackaljandi/stop std_msgs/Bool "data: true"
+
+# 3순위 — 스크립트 Ctrl+C
+
+
+────────────────────────────────────────────────────────────────
+9. 한 시퀀스 끝나고 — 종료
+────────────────────────────────────────────────────────────────
+
+# 자율주행 자연 종료 또는 Ctrl+C
+# rosbag 창 Ctrl+C
+
+# bag 검증
+rosbag info ~/data/$(date +%Y%m%d)/square45_*.bag
+
+# 종점에서 줄자/각도기로 GT 측정 → 메모
+
+
+────────────────────────────────────────────────────────────────
+10. 다른 시퀀스 — 틸트 바꾸고 반복
+────────────────────────────────────────────────────────────────
+
+# 틸트 90도로
+rosservice call /dynamixel_workbench/dynamixel_command \
+  "command: '' id: 1 addr_name: 'Goal_Position' value: 1024"
+
+# 새 rosbag (파일명 90으로)
+cd ~/data/$(date +%Y%m%d)
+rosbag record -O square90_$(date +%H%M%S).bag \
+  /camera/color/image_raw /camera/color/camera_info \
+  /camera/aligned_depth_to_color/image_raw \
+  /camera/aligned_depth_to_color/camera_info \
+  /camera/imu /camera/imu_info /camera/extrinsics/depth_to_color \
+  /odometry/filtered /tf /tf_static
+
+# 자율주행 다시
+python ~/square.py
+
+
+────────────────────────────────────────────────────────────────
+11. 전체 마무리
+────────────────────────────────────────────────────────────────
+
+# 틸트 0도 복귀 (안전)
+rosservice call /dynamixel_workbench/dynamixel_command \
+  "command: '' id: 1 addr_name: 'Goal_Position' value: 2048"
+
+# 모든 창 Ctrl+C
+
+
+────────────────────────────────────────────────────────────────
+12. 노트북에서 — bag 회수
+────────────────────────────────────────────────────────────────
+
+mkdir -p /mnt/d/jackal_data
+rsync -avh --progress \
+    jackal@192.168.0.30:~/data/ \
+    /mnt/d/jackal_data/
+
+
+================================================================
+                    ※ 외워둘 한 가지
+================================================================
+
+  자칼이 이상하면 → 빨간 E-stop 누르고 생각해
+
+================================================================
