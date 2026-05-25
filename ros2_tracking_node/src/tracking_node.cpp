@@ -61,7 +61,17 @@ public:
         this->declare_parameter("max_speed_z_mps",    2.0);  // 전후 최대 속도 (m/s)
         // ↑ 걷는 사람 ~1.5 m/s. 여유 두고 2.0. 이 이상의 추정 속도면 outlier.
         this->declare_parameter("ema_alpha_xy",           0.35); // x,y EMA 계수
-        this->declare_parameter("ema_alpha_z",            0.15); // z EMA 계수
+        this->declare_parameter("ema_alpha_z",            0.15); // z EMA 계수 (정적 폴백용. 동적 사용 시 min/max가 우선)
+
+        // [0525] 동적 z 평활: 사람이 화면에서 좌우로 빠르게 움직일 때(bbox 중심 픽셀 x가
+        //   많이 변할 때) z의 EMA 계수를 낮춰 강하게 평활하고, 정지 시엔 높여 빠르게 반응.
+        //   이동 중 모션블러로 depth가 출렁이는 걸 흡수하되, 정지 시 진짜 거리는 빠르게 따라감.
+        //   alpha_z = max - (min~max를 dpx/full 비율로 보간). dpx=프레임간 |Δ픽셀x|.
+        //   ★픽셀 x를 신호로 쓰는 이유: azimuth/sx는 z 오염에 영향받아 순환 발생. 픽셀 x는 z 무관.
+        this->declare_parameter("dyn_z_smooth",     true);  // 동적 z 평활 on/off
+        this->declare_parameter("ema_alpha_z_min",  0.08);  // 빠른 좌우이동 시 (강한 평활). 0이면 동결이라 하한 둠.
+        this->declare_parameter("ema_alpha_z_max",  0.40);  // 정지 시 (빠른 반응). 기존 z 반응속도.
+        this->declare_parameter("dyn_z_px_full",    15.0);  // 프레임간 픽셀x 이동이 이 값 이상이면 평활 최대(min).
 
         // [0524] 메트릭 요약 로그 주기(프레임). 0이면 요약 로그 끕.
         this->declare_parameter("metric_log_period",  150);
@@ -89,6 +99,10 @@ public:
         max_speed_z_mps_  = (float)this->get_parameter("max_speed_z_mps").as_double();
         ema_alpha_xy_     = (float)this->get_parameter("ema_alpha_xy").as_double();
         ema_alpha_z_      = (float)this->get_parameter("ema_alpha_z").as_double();
+        dyn_z_smooth_     = this->get_parameter("dyn_z_smooth").as_bool();
+        ema_alpha_z_min_  = (float)this->get_parameter("ema_alpha_z_min").as_double();
+        ema_alpha_z_max_  = (float)this->get_parameter("ema_alpha_z_max").as_double();
+        dyn_z_px_full_    = (float)this->get_parameter("dyn_z_px_full").as_double();
         metric_log_period_ = (int)this->get_parameter("metric_log_period").as_int();
 
         tracker_ = create_tracker(frame_rate, track_buffer,
@@ -285,7 +299,13 @@ private:
         if (owner_tr) {
             float bx = (owner_tr->x1 + owner_tr->x2) * 0.5f;
             float by = (owner_tr->y1 + owner_tr->y2) * 0.5f;
-            float depth_mm = match_track_to_det_depth(*owner_tr, dets);
+            cur_owner_px_ = bx;           // [0525] 동적 z평활용: 이번 프레임 owner 픽셀 x
+            cur_owner_px_valid_ = true;
+            // [0525] depth를 owner_tr에서 직접 사용 (이제 Kalman 평활 z).
+            //   이전엔 match_track_to_det_depth로 IoU 재매칭해 raw det depth를 가져왔는데,
+            //   bx(칼만 박스)와 Z(IoU 매칭 det)가 서로 다른 소스라 좌우 이동 시 불일치로
+            //   sx/sz가 함께 출렁였다. 이제 bx와 depth가 모두 owner_tr(Kalman 상태)에서 나와 일관됨.
+            float depth_mm = owner_tr->depth;
 
             // ── Depth Jump Rejection (단순 z만, 1차 보호막) ──
             // EMA 단계에서 더 정밀한 속도 기반 거부를 하니, 여기선 명백한 outlier만.
@@ -329,6 +349,8 @@ private:
 
                 float bx = (lost_buf[i].x1 + lost_buf[i].x2) * 0.5f;
                 float by = (lost_buf[i].y1 + lost_buf[i].y2) * 0.5f;
+                cur_owner_px_ = bx;           // [0525] 동적 z평활용 (KF 외삽 위치)
+                cur_owner_px_valid_ = true;
                 float depth_mm = lost_buf[i].depth;  // KF z 외삽값
 
                 if (depth_mm > 1.0f) {
@@ -399,9 +421,20 @@ private:
                 }
 
                 // 2) EMA로 평탄화
+                // [0525] z는 동적 alpha 적용: 좌우 이동(픽셀x 변화)이 클수록 강하게 평활.
+                float alpha_z_eff = ema_alpha_z_;   // 기본(정적) 폴백
+                if (dyn_z_smooth_ && cur_owner_px_valid_ && prev_owner_px_valid_) {
+                    float dpx = std::fabs(cur_owner_px_ - prev_owner_px_);
+                    float ratio = dpx / dyn_z_px_full_;
+                    if (ratio > 1.f) ratio = 1.f;
+                    if (ratio < 0.f) ratio = 0.f;
+                    // ratio=0(정지) -> max(빠름),  ratio=1(빠른이동) -> min(강한평활)
+                    alpha_z_eff = ema_alpha_z_max_ - ratio * (ema_alpha_z_max_ - ema_alpha_z_min_);
+                }
+
                 ema_x_ = ema_alpha_xy_ * clipped_x + (1.f - ema_alpha_xy_) * ema_x_;
                 ema_y_ = ema_alpha_xy_ * clipped_y + (1.f - ema_alpha_xy_) * ema_y_;
-                ema_z_ = ema_alpha_z_  * clipped_z + (1.f - ema_alpha_z_)  * ema_z_;
+                ema_z_ = alpha_z_eff  * clipped_z + (1.f - alpha_z_eff)  * ema_z_;
             }
             ema_track_id_ = out.track_id;
             ema_lost_streak_ = 0;
@@ -456,6 +489,16 @@ private:
                 m_id_switches_, m_perma_lost_, m_speed_caps_);
         }
         // ── 메트릭 끝 ──────────────────────────────────
+
+        // [0525] 동적 z평활용: 이번 프레임 owner 픽셀x를 다음 프레임 비교용으로 이월.
+        //   owner를 못 찾은 프레임(cur_valid=false)이면 prev도 무효화 → 재등장 시 dpx 폭팅 방지.
+        if (cur_owner_px_valid_) {
+            prev_owner_px_ = cur_owner_px_;
+            prev_owner_px_valid_ = true;
+        } else {
+            prev_owner_px_valid_ = false;
+        }
+        cur_owner_px_valid_ = false;   // 다음 프레임을 위해 리셋
 
         owner_pub_->publish(out);
     }
@@ -524,6 +567,15 @@ private:
     float ema_x_ = 0.f, ema_y_ = 0.f, ema_z_ = 0.f;
     float ema_alpha_xy_    = 0.35f;
     float ema_alpha_z_     = 0.15f;
+    // [0525] 동적 z 평활 파라미터 + 상태
+    bool  dyn_z_smooth_    = true;
+    float ema_alpha_z_min_ = 0.08f;
+    float ema_alpha_z_max_ = 0.40f;
+    float dyn_z_px_full_   = 15.0f;
+    float cur_owner_px_    = 0.f;   // 이번 프레임 owner 픽셀 x
+    float prev_owner_px_   = 0.f;   // 직전 프레임 owner 픽셀 x
+    bool  cur_owner_px_valid_  = false;
+    bool  prev_owner_px_valid_ = false;
     int   ema_lost_streak_       = 0;
     int   ema_lost_reset_frames_ = 30;   // 30프레임 (1초) 이상 lost면 EMA 리셋
     rclcpp::Time last_pose_time_;        // 속도 추정용

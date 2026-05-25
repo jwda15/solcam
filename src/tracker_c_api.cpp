@@ -45,7 +45,7 @@ int update_tracker(void* tracker_ptr,
         results[i].track_id = (int)tracks[i]->getTrackId();
         results[i].label    = 0;
         results[i].score    = tracks[i]->getScore();
-        results[i].depth    = tracks[i]->getDepth();
+        results[i].depth    = tracks[i]->getKalmanDepth();  // [0525] raw 대신 Kalman 평활 z (위치와 동일 소스)
     }
     return n;
 }

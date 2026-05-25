@@ -78,6 +78,17 @@ const float& byte_track::STrack::getDepth() const
     return depth_;
 }
 
+// [0525] Kalman 평활 depth getter.
+//   New 상태(activate 전)에는 mean_이 미초기화이므로 raw depth_로 폴백.
+//   그 외(Tracked/Lost)에는 KF가 추적하는 mean_[2]를 반환.
+float byte_track::STrack::getKalmanDepth() const
+{
+    if (state_ == STrackState::New) {
+        return depth_;          // 아직 Kalman initiate 전
+    }
+    return mean_[2];            // [x, y, z, a, h, ...] 의 z = 평활된 depth
+}
+
 void byte_track::STrack::activate(const size_t& frame_id, const size_t& track_id)
 {
     // 5D measurement 조립: [x, y, z, a, h]

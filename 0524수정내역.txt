@@ -665,3 +665,105 @@ std_weight_depth 재설정 (tracking_params.yaml):
   - 수정 후 올리기: git add -A && git commit -m "메시지" && git push myrepo main
   - 다른 PC서 받기: git pull myrepo main
   - 파일 추가/수정/삭제 모두 위 add→commit→push로 반영(GitHub가 자동 덮어씀/버전관리).
+
+
+====================================================
+[0525 오후] OAK 실시간 추적 — 이동 중 z(깊이) 멀어짐 디버깅
+====================================================
+
+■ 증상 (정우 관찰)
+  - 사람이 좌우(azimuth)로만 이동하면, 깊이방향 거리(spatial_z)가 확 멀어졌다가
+    멈추면 다시 가까워짐. 일관적으로 재현됨.
+  - 2D 맵(viz_topdown)에서 점이 앞뒤로 까딱거림.
+
+■ 측정 (좌우 이동-정지 반복, 2m 거리)
+  - 좌우 1.86~2.86m 이동 시 spatial_z가 1.0~1.23m 출렁임.
+  - 위치대별 분석: 중앙(|sx|<0.5m)에서도 z변동 1.05m로 가장자리(1.14m)와 비슷.
+    → "화면 가장자리에서만 생긴다"는 가설은 틀림. 중앙에서도 출렁임.
+  - detector raw depth와 owner_pose spatial_z 변동이 1:1로 동일(1.23m=1.23m).
+    → tracking_node 처리 문제가 아니라 detector가 주는 depth 자체가 출렁임.
+  - z 절대값도 부정확(정우 ~2m라는데 평균 3.2~3.6m. 단 "2m는 눈대중"이라 불확실).
+
+■ 원인 분석 (확정)
+  ★주원인: 모션블러 → bbox 팽창 → 배경 침투.
+    1. 좌우 이동 시 RGB에 모션블러 발생
+    2. YOLO가 번진 윤곽을 이동방향으로 늘려 bbox를 크게 잡음
+       (측정: bbox 폭 57~91px로 변동, 사람은 그대로인데 박스가 출렁)
+    3. 박스 팽창 → depth 집계 영역(bbox_scale)에 사람 뒤 배경 침투
+    4. 배경은 멀리 있으니 집계 depth가 멀어짐
+    5. 멈추면 블러 사라짐 → 박스 사람한테 맞음 → depth 다시 가까워짐
+    => "움직이면 멀어지고 멈추면 가까워진다, 일관적"의 정확한 메커니즘.
+       물리적 인과라 detector 단에서 완전히 못 없앰.
+
+  ※ Time sync(RGB-depth 시간 어긋남) 가설은 기각:
+    OAK SpatialDetectionNetwork가 칩 레벨에서 RGB+stereo depth를 한 묶음으로
+    동기화해 내보냄(d.spatialCoordinates.z가 그 박스와 동일 시점). 우리가 따로
+    안 맞춰도 됨. 데이터셋이면 sync 문제 가능하나 OAK 실시간은 해당 없음.
+
+  ※ 식(공식)은 안 꼬임: sz=Z(순수 깊이), sx=(bx-cx)·Z/fx, azimuth=atan2(sx,sz),
+    distance=sqrt(sx²+sz²). distance가 좌우이동 시 커지는 건 유클리드 거리라 정상
+    (피타고라스). 봐야 할 건 distance가 아니라 spatial_z. viz_topdown 점도
+    distance/azimuth가 아니라 sx,sz(직교)로 찍음. azimuth/distance는 제어(follow_node)용.
+
+■ 시도한 수정들 (코드 반영됨, 효과 순)
+  1. [MEDIAN 집계] oak_detector.py: setSpatialCalculationAlgorithm(MEDIAN).
+     기본(MEAN 추정)은 배경 한 점에도 끌려 올라감. MEDIAN은 이상치에 강함.
+     → raw depth 출렁임 크게 개선(초기 측정 3m → 0.4m대). 단 박스가 많이 팽창해
+       배경이 영역 절반 넘으면 MEDIAN도 못 막음.
+  2. [Kalman z depth] depth 출처를 raw → Kalman 평활 z로.
+     - 문제였던 곳: tracking_node가 owner_tr(칼만 박스)의 bx와, match_track_to_det_depth
+       (IoU 매칭 det)의 Z를 섞어 씀 → 서로 다른 소스라 좌우이동 시 sx/sz 함께 출렁.
+     - STrack.getDepth()는 raw(update마다 덮어씀). 진짜 칼만 z는 mean_[2].
+       get_lost_tracks(KF외삽)는 이미 mean_[2] 쓰는데 HIT땐 raw라 불일치였음.
+     - 수정: STrack::getKalmanDepth() 추가(New면 raw 폴백, 아니면 mean_[2]).
+       tracker_c_api update_tracker가 이걸 results.depth에 넣음.
+       tracking_node는 match_track_to_det_depth 대신 owner_tr->depth 직접 사용.
+       → bx와 depth가 같은 소스(Kalman)로 일관됨. libbytetrack.so + tracking_node 재빌드.
+     - 합성검증(/tmp/verify_kf_depth.py): raw std 290mm → kf 233mm (std_weight_depth=0.07).
+     - ★측정 결과: spatial_z 변동 = raw 변동 1:1 동일. 즉 소스 일관성은 고쳤으나(맞는 수정)
+       depth 원천 출렁임이 주원인이라 이것만으론 z 출렁임 못 잡음.
+  3. [bbox_scale 0.5 → 0.3] oak_params.yaml + oak_detector.py declare 기본값 둘 다.
+     (★detector를 --params-file 없이 띄우면 코드 기본값 씀. 둘 다 바꿔야 함)
+     집계 영역을 사람 몸통 정중앙으로 좁혀 배경 침투 최소화.
+     → ★중앙(|sx|<0.5m) z변동 1.05m → 0.59m로 거의 절반 개선. 전체 1.23m는 유지
+       (가장자리 여전). 0.59m도 여전히 큼.
+  4. [동적 z 평활] tracking_node.cpp EMA 블록.
+     정우 아이디어: "azimuth(좌우) 변동량 ∝ 평활 강도". 좌우 이동 시 z 강하게 평활,
+     정지 시 빠르게 반응.
+     - 신호: bbox 중심 픽셀 x의 프레임간 변화량(dpx). ★픽셀 x를 쓰는 이유:
+       azimuth/sx는 z 오염에 영향받아 순환 발생. 픽셀 x는 z와 무관해 깨끗.
+     - 공식: alpha_z = max - clamp(dpx/full,0,1)·(max-min).
+       dpx=0(정지)→max(빠름), dpx≥full(빠른이동)→min(강한평활).
+     - 파라미터(declare, yaml 미반영이라 코드 기본값 사용 중):
+       dyn_z_smooth=true, ema_alpha_z_min=0.08, ema_alpha_z_max=0.40, dyn_z_px_full=15.0.
+     - 안전장치: min=0.08 하한(대각선 이동 시 z 완전 동결 방지),
+       owner 못찾은 프레임이면 prev 무효화(재등장 시 dpx 폭주 방지).
+     - 위험(미해결): 진짜 대각선 이동(좌우+앞뒤 동시)은 az 변하니 평활 강해져 진짜
+       z변화 뭉갤 수 있음. 또 증상완화지 원인(bbox팽창) 해결 아님.
+     - tracking_node 재빌드 완료(경고0). ★라이브 검증 중 "아직 잘 안 됨"(정우).
+
+  관련 EMA 튜닝(이동 반응 느림 해소): ema_alpha_xy 0.35→0.6, ema_alpha_z 0.15→0.4.
+
+■ 현재 상태 / PENDING
+  - 동적 z평활까지 넣었으나 정우가 "아직 잘 안 된다". 추가 진단/튜닝 필요.
+  - 미시도 옵션: std_weight_depth 0.07→0.2(이제 Kalman z라 효과 있음),
+    dyn_z_px_full/min/max 라이브 튜닝(yaml에 파라미터 추가하면 빌드 없이 조정 가능),
+    depth_upper 낮추기(정우가 "2는 하지마"라 보류 — 단 그건 배경 cut이라 다른 접근).
+  - 근본 한계: 모션블러+스테레오 정밀도. 실사용은 OAK yaw가 주인 중앙 고정이라
+    가장자리 케이스 덜 중요할 수 있으나, 측정상 중앙에서도 출렁여 이 위안 약함.
+  - ★이번 세션 수정 전부 git 미커밋. 검증된 개선(MEDIAN/Kalman z/bbox 0.3) 우선 커밋 권장.
+
+■ 측정 스크립트
+  /tmp/verify_kf_depth.py(Kalman z 평활 합성검증), /tmp/sz*.txt /tmp/sx*.txt(이동측정),
+  /tmp/raw2.txt(detector raw depth), /tmp/measure_dets.py /tmp/analyze_dets.py(데이터셋).
+  측정 명령 패턴: ros2 topic echo /owner_pose --field spatial_z (10초 카운트다운 후 측정).
+
+■ 환경 함정 재확인 (이번 세션 반복 발생)
+  - ROS_DOMAIN_ID: 집 PC .bashrc 119줄 export ROS_DOMAIN_ID=30. 새 터미널은 자동 30.
+    단 Claude 셸(Desktop Commander)은 .bashrc 안 읽어 기본 0 → detector를 거기서 띄우면
+    viz/측정(터미널, domain30)과 통신 안 됨. 반드시 ROS_DOMAIN_ID=30 통일.
+  - depthai 캐시 권한: detector를 권한없는 cwd(/usr/lib/claude-desktop)에서 띄우면
+    .depthai_cached_models Permission denied. 반드시 cd "$HOME"에서 실행.
+    안전 기동: nohup bash -c 'cd "$HOME" && export ROS_DOMAIN_ID=30 && source ... && exec ros2 run ...'
+  - 프로세스 확인: pgrep -f oak_detector가 자기 명령줄 잡아 거짓양성. ps aux | grep "[o]ak_detector" 사용.
+  - DEVICE_ALREADY_IN_USE: 이전 detector가 OAK 미해제. pkill 후 5~6초 대기 후 재기동.

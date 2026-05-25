@@ -34,7 +34,9 @@ oak_detector:
     # ── Spatial(depth) ───────────────────────────
     depth_lower_mm: 100       # 스테레오 근거리 한계 부근 (mm)
     depth_upper_mm: 8000      # 사용 최대 거리 (mm)
-    bbox_scale:     0.5       # spatial 계산 시 bbox 중앙 50%만 (배경 침투 방지)
+    bbox_scale:     0.3       # [0525] spatial 계산 시 bbox 중앙 30%만 사용.
+                              #   0.5 -> 0.3: 이동 중 모션블러로 bbox가 팭창하면 중앙 50%에도
+                              #   배경이 끌어와 depth가 멀어졌음. 중앙을 더 좁혀 배경 침투 최소화.
 
     # ── 기타 ─────────────────────────────────────
     publish_rgb: true         # viz용 RGB(/oak/rgb/image_raw). 대역폭 아끼려면 false.

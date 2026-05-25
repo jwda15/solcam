@@ -41,8 +41,13 @@ public:
     const size_t& getStartFrameId() const;        // 시작 프레임 번호
     const size_t& getTrackletLength() const;      // 업데이트된 회수
 
-    // [3D 확장] 현재 depth 값 (Kalman z 축 기준)
+    // [3D 확장] 현재 depth 값 (raw 측정값. update()마다 detection depth로 덮어써짐)
     const float& getDepth() const;
+
+    // [0525] Kalman이 평활한 depth (mean_[2]). activate 전(New)이면 raw depth_ 폴백.
+    //   getDepth()는 raw라 프레임마다 출렁이지만, 이건 KF가 predict/update로 평활한 z.
+    //   bbox 중심(mean_[0,1])과 같은 Kalman 상태에서 나오므로 위치-깊이 일관성 유지.
+    float getKalmanDepth() const;
 
     // --------------------------------------------------------
     // [3D 확장] BYTETracker의 Mahalanobis 코스트 계산에서

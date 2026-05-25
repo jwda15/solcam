@@ -201,6 +201,12 @@ class VizTopdown(Node):
 
         draw_hud(img, self.last_owner, is_kf_now)
 
+        # [0525] 창으로 직접 표시 (rqt 없이 바로 보기). q/ESC 종료.
+        cv2.imshow('Owner Top-Down (2D map)', img)
+        if (cv2.waitKey(1) & 0xFF) in (ord('q'), 27):
+            rclpy.shutdown()
+
+        # /viz/topdown 으로도 계속 publish (rqt나 녹화용)
         try:
             out = self.bridge.cv2_to_imgmsg(img, encoding='bgr8')
             out.header.stamp = self.get_clock().now().to_msg()
@@ -217,6 +223,8 @@ def main():
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    finally:
+        cv2.destroyAllWindows()
     node.destroy_node()
     rclpy.shutdown()
 

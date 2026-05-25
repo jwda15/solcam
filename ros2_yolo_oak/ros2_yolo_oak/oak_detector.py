@@ -26,7 +26,7 @@ class OakDetector(Node):
         self.declare_parameter('person_only', True)
         self.declare_parameter('depth_lower_mm', 100)
         self.declare_parameter('depth_upper_mm', 8000)
-        self.declare_parameter('bbox_scale', 0.5)
+        self.declare_parameter('bbox_scale', 0.3)
         self.declare_parameter('conf_thresh', 0.5)
         self.declare_parameter('publish_rgb', True)
 
@@ -84,6 +84,13 @@ class OakDetector(Node):
         self.nn.input.setBlocking(False)
         self.nn.setConfidenceThreshold(self.conf_thresh)  # [0525] NN단 신뢰도 필터 (누락 보완)
         self.nn.setBoundingBoxScaleFactor(self.bbox_scale)
+        # [0525] 깊이 집계를 MEDIAN으로 명시.
+        #   기본 집계는 bbox 중앙 영역(bbox_scale)의 depth를 모아 대표값 1개를 내는데,
+        #   사람이 좌우로 움직이면(azimuth 변화) 영역에 들어오는 신체부위/배경이 바뀌며
+        #   depth 분포가 출렁여 z가 요동친다.
+        #   MEDIAN은 배경/이상치 몇 점이 끼어도 정렬 후 가운데값이라 출렁임에 강하다.
+        #   (MEAN은 먼 배경 한 점에도 끌려 올라가 더 튄다.)
+        self.nn.setSpatialCalculationAlgorithm(dai.SpatialLocationCalculatorAlgorithm.MEDIAN)
         self.nn.setDepthLowerThreshold(self.depth_lower)
         self.nn.setDepthUpperThreshold(self.depth_upper)
         self.labelMap = self.nn.getClasses()

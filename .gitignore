@@ -51,3 +51,4 @@ _check.txt
 *.exe
 *.out
 *.app
+.depthai_cached_models/
