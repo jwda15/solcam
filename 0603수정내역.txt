@@ -1,0 +1,236 @@
+====================================================
+solcam 제어 노드 신규 작성 (2026-06-03)
+====================================================
+
+배경:
+  트래킹 파이프라인(OAK-D → ByteTrack → /owner_pose)이 동작하는 상태에서,
+  이제 그 주인 위치를 받아 로봇을 움직이는 "제어 노드"를 작성.
+  출력은 6자유도 속도 명령(몸체 vx/vy/yaw, 리프트 vz, 상단 yaw rate).
+  각 모터(메카넘4+리프트1+상단1)에 줄 추력 매핑은 팀원 담당이라,
+  제어 노드는 "자유도 속도"까지만 책임진다.
+
+  기존 ros2_follow_node(Jackal 차동구동 시절 코드)는 출력 구조가 이 로봇과
+  달라 사실상 폐기. 트래킹 노드는 건드리지 않기 위해 새 패키지
+  ros2_control_node 를 따로 만들어 작업.
+
+  ※ 코드 작성 전, 제어 로직을 먼저 확정(제어로직.md, 같은 날 작성).
+    오늘은 그 설계대로 "모드1(FOLLOW)"만 구현. 나머지 모드는 자리만.
+
+
+----------------------------------------------------
+0. 작업 전 결정사항 (대화로 확정)
+----------------------------------------------------
+  Q1. 몸체 yaw 출력 사용?       → 사용. "머리 따라 몸 돌리기"로 구현.
+  Q2. 출력 메시지?              → 전용 ControlCmd.msg (6필드, 풍성하게).
+  Q3. 상단 yaw 가동범위?        → 최대 2바퀴(연속회전 불가). 언와인딩은
+                                   추가기능으로 보류, 지금은 파라미터 자리만.
+  Q4. 손동작 명령?              → 별도 supervisor 상태기계로 분리(오늘 범위 밖).
+                                   제어 노드는 /control_mode 만 구독.
+  추가. 초음파3+ToF3 측면센서   → 간단 장애물 회피 포함(ObstacleField).
+
+
+----------------------------------------------------
+1. 새 패키지 구조 (ros2_control_node)
+----------------------------------------------------
+  ros2_control_node/
+  ├── msg/
+  │   ├── ControlCmd.msg          ← 출력: 6자유도 속도
+  │   └── ProximityArray.msg      ← 입력: 측면센서 거리/방향 배열
+  ├── include/control_node/
+  │   ├── types.hpp               ← ControlCommand, OwnerState, Mode, guardDt
+  │   ├── pid.hpp                 ← Pid, SlewRateLimiter (헤더온리 부품)
+  │   ├── obstacle_field.hpp      ← ObstacleField (장애물 회피)
+  │   ├── controller.hpp          ← ControllerParams, IController (인터페이스)
+  │   ├── follow_controller.hpp   ← FollowController (모드1 구현)
+  │   └── control_node.hpp        ← ControlNode (ROS 진입점) 선언
+  ├── src/
+  │   ├── control_node.cpp        ← ControlNode 구현
+  │   └── main.cpp                ← 실행 진입점
+  ├── config/control_params.yaml  ← 파라미터 기본값
+  ├── launch/control.launch.py    ← 단독 실행 런치
+  ├── CMakeLists.txt
+  ├── package.xml
+  └── README.md
+
+
+----------------------------------------------------
+2. 객체지향 설계 (책임 분리)
+----------------------------------------------------
+  클래스마다 책임을 하나씩 갖게 해서, 나중에 모드 추가/테스트가 쉽게.
+
+  - ControlNode (rclcpp::Node)
+      ROS 진입점. 구독/발행/타이머/파라미터만. 제어 로직은 안 가짐.
+      모드에 맞는 제어기 선택 → 출력 → 장애물 보정 → 발행.
+
+  - IController (인터페이스)
+      모든 주행모드 제어기의 공통 계약: configure/reset/step.
+      전략 패턴. 오늘은 FollowController 하나지만, 나중에 OrbitController
+      등을 같은 인터페이스로 추가해 갈아끼울 수 있음.
+
+  - FollowController : IController
+      모드1 제어 법칙(세 루프, 아래 3장).
+
+  - Pid / SlewRateLimiter (pid.hpp, 헤더온리, ROS 무관)
+      재사용 PID(불감대+windup+미분)와 가속제한. 단위테스트 쉬움.
+
+  - ObstacleField (obstacle_field.hpp, 헤더온리, ROS 무관)
+      측면센서로 "가고 싶은 속도"를 "갈 수 있는 속도"로 깎음.
+      제어기와 분리돼 어떤 모드든 공통으로 끼울 수 있음.
+
+  - ControlCommand / OwnerState (types.hpp)
+      ROS 메시지와 분리한 내부 표현. 제어 로직을 ROS 없이 테스트 가능.
+      (실제로 이번에 g++로 순수 로직만 떼서 부호/수렴 검증함, 6장)
+
+
+----------------------------------------------------
+3. 모드1(FOLLOW) 제어 법칙 — 세 루프 협조
+----------------------------------------------------
+  좌표계: 몸체 x전방+ y좌측+ yaw CCW+.  azimuth=atan2(sx,sz) 우측이 +.
+
+  (1) 상단 yaw (빠름) : azimuth → 0
+        top_yaw_rate = -PID(azimuth)
+        부호: 주인 우측(az>0)이면 카메라를 우향(CCW 음수)으로. → 부호 반전.
+        OAK-D를 항상 주인에 락온(Re-ID 없는 시스템의 핵심 방어선).
+
+  (2) 몸체 yaw (느림) : 머리 따라 정렬
+        body_yaw_rate = kp_align * top_yaw_rate   (kp_align<1)
+        "머리가 일하는 방향으로 몸이 천천히 따라 돈다."
+        → θ_head 엔코더/적분 추정 불필요(상단yaw 출력 자체가 정렬 신호).
+        kp_align<1, w_body_max<w_top_max 로 머리는 빠르고 몸은 느리게(루프분리).
+
+  (3) 몸체 vx (거리)  : distance → d_target
+        body_vx = PID(distance - d_target)
+        정렬되면 주인은 몸체 정면 → vy=0.
+
+  정상상태: 몸이 정면 맞추면 top_yaw→0 → body_yaw→0, 누적각도 0 부근으로
+            풀려 상단yaw 2바퀴 한계에도 유리. (언와인딩을 추가기능으로
+            뺄 수 있는 이유 = 이 자기정렬.)
+
+  리프트: 모드1은 주행 위주라 0. (정지 시 높이제어는 COMPOSE/STATIONARY에서.)
+
+
+----------------------------------------------------
+4. 장애물 회피 (ObstacleField)
+----------------------------------------------------
+  측면 초음파3 + ToF3 = 6센서. 종류 구분 안 함(회피엔 "거리"만 필요,
+  종류별 신뢰도는 센서 노드가 흡수해 거리값으로만 넘김).
+
+  입력: ProximityArray { distances[], directions[] }  (같은 인덱스=같은 센서)
+  방식: velocity scaling.
+    - 이동하려는 속도벡터 v=(vx,vy)가 어떤 센서 방향과 같은 쪽(cos>0)을 향하면,
+      그 방향 장애물이 가까울수록 속도를 더 깎음.
+      r>=slow_dist: 영향0 / stop<r<slow: 선형감속 / r<=stop_dist: 완전차단.
+    - 여러 센서 중 가장 강한 감속을 채택(min_scale).
+  특징:
+    - 회전(yaw)은 안 건드림(제자리회전 측면충돌 위험 낮음). 후속 확장 여지.
+    - 제어기와 완전 분리 → ControlNode가 제어기 출력 뒤에 마지막으로 적용.
+    - 센서 타임아웃(proximity_timeout=0.3s)이면 회피 비활성(주행은 계속, 보수적).
+
+
+----------------------------------------------------
+5. 입출력 토픽 / 안전
+----------------------------------------------------
+  입력:
+    /owner_pose    ros2_tracking_node/OwnerPose   주인 위치
+    /control_mode  std_msgs/Int32                 모드(supervisor가 결정)
+    /follow_target geometry_msgs/Vector3 (선택)   x=목표거리 D
+    /lift_height   std_msgs/Float32 (선택)        리프트 현재높이
+    /proximity     ros2_control_node/ProximityArray  측면센서
+  출력:
+    /control_cmd   ros2_control_node/ControlCmd   6자유도 속도
+
+  안전장치:
+    - 고정주기 50Hz 타이머 출력(검출 ~19Hz에 안 묶임 → 모터 입장 매끄러움).
+    - IDLE 모드: 무조건 정지.
+    - owner 타임아웃(0.5s)/미탐지: 정지 + 제어기 reset.
+    - dt 보호(guardDt): dt<=0 또는 >1.0 이면 0.02s 대체.
+    - 출력 클램프(PID limits) + 슬루레이트(가속) 제한.
+    - 미구현 모드(2/3/4)는 안전하게 정지로 폴백.
+
+
+----------------------------------------------------
+6. 검증 (리뷰 환경, g++)
+----------------------------------------------------
+  리뷰 환경엔 ROS2 없음 → ROS 무관 헤더(pid/obstacle_field/follow_controller/
+  types/controller)만 떼어 g++ -std=c++17로 컴파일 + 시뮬 테스트.
+
+  결과(전부 통과):
+   [1] az=+0.3 → top_yaw<0(우향), body_yaw 동부호.            OK
+   [2] dist=3.0(>1.5) → body_vx>0(전진).                       OK
+   [3] dist=0.5(<1.5) → body_vx<0(후진).                       OK
+   [4] az·dist 불감대 → 출력 0.                                OK
+   [5] 폐루프 시뮬(카메라회전+전진 플랜트): azimuth→0, distance→1.5. OK
+       (처음 FAIL은 테스트 플랜트의 부호 실수였고, 정정 후 수렴 확인.
+        컨트롤러 코드 자체는 옳음.)
+   [O1] 측면 0.25m 장애물+그쪽 이동 → 감속.                    OK
+   [O2] 장애물 반대쪽 이동 → 영향 없음.                        OK
+   [O3] 0.15m(<stop)+그쪽 이동 → 완전차단(0).                  OK
+
+  ※ 실제 colcon 빌드는 PC에서 확인 필요(리뷰 환경에 rclcpp/rosidl 없음).
+    CMakeLists는 rosidl_get_typesupport_target 방식(Humble/Jazzy 공통) 사용.
+
+
+----------------------------------------------------
+7. ★실주행 첫날 반드시 확인할 것 (부호 규약)
+----------------------------------------------------
+  제어 안정성이 부호 한 개에 달림:
+    top_yaw_rate = -PID(azimuth)
+  이는 "주인이 우측(az>0)이면 카메라를 우향으로 돌린다"는 가정.
+  실제 하드웨어에서 상단 yaw 모터의 +방향이 이와 반대면 → 발산(주인에서 멀어짐).
+  → 첫 통전 시 azimuth 살짝 줬을 때 카메라가 주인 쪽으로 가는지 눈으로 확인.
+    반대면 w_top 부호 또는 모터 배선/방향 파라미터로 뒤집을 것.
+
+  몸체 yaw도 동일: body_yaw가 top_yaw와 같은 부호인데, 실제 메카넘 yaw +방향이
+  반대면 kp_align 부호를 뒤집어야 함.
+
+
+----------------------------------------------------
+8. 기존 ros2_follow_node 처리
+----------------------------------------------------
+  - follow_node.cpp: Jackal 차동구동(linear.x + angular.z)용이라 이 로봇
+    (메카넘+리프트+상단yaw)과 출력 구조 불일치 → 폐기 대상.
+  - mecanum_driver.cpp: /cmd_vel(Twist) → 휠4+리프트 역운동학. 이건 팀원의
+    드라이버 노드 설계에 참고가 될 수 있어 당장 삭제 안 함.
+    (삭제 여부는 git에서 정우가 결정. CMakeLists에서 이 패키지를 빌드 대상에서
+     빼거나 폴더째 지우면 됨.)
+  - 결론: ros2_control_node 가 follow_node 를 대체. 빌드는 control_node만.
+
+
+----------------------------------------------------
+9. 빌드 / 실행
+----------------------------------------------------
+  빌드(심볼릭 링크 워크스페이스, 기존 방식 동일):
+    ln -sfn <repo>/ros2_control_node ~/solcam_ws/src/ros2_control_node
+    cd ~/solcam_ws
+    colcon build --packages-select ros2_tracking_node ros2_control_node
+    source install/setup.bash
+    ※ ros2_tracking_node(OwnerPose) 를 먼저/함께 빌드해야 함.
+    ※ 연구실 Jazzy / 집 Humble. rosidl 방식은 공통이라 빌드될 것으로 예상하나
+      최종 확인은 colcon으로.
+
+  실행:
+    ros2 launch ros2_control_node control.launch.py            # IDLE 시작
+    ros2 launch ros2_control_node control.launch.py mode:=1    # 바로 FOLLOW
+    ros2 topic pub /control_mode std_msgs/Int32 "data: 1" -1   # 수동 모드전환
+
+
+----------------------------------------------------
+10. TODO (다음 작업)
+----------------------------------------------------
+  [모드 확장]
+   - 모드2 ORBIT: 접선/반경 분해 제어(OrbitController : IController).
+   - 모드3 STATIONARY: 몸통 정지 + 상단yaw pan(배경 우선).
+   - 모드4 COMPOSE: 정지 + 리프트 높이제어 활성(손동작 목표높이).
+  [상단 yaw 언와인딩]
+   - theta_soft_max 실제값(~11.3rad=1.8바퀴)으로 축소 + 언와인딩 동작
+     (정지+주인정면일 때 한 바퀴 역회전 / 주기적 역회전 / 시연 동선 휴리스틱).
+  [주인 분실 대응]
+   - 상단 yaw search hint(마지막 azimuth 부호로 천천히 돌며 재포착).
+  [손동작]
+   - supervisor 상태기계(따봉→HOLD→손가락 선택→아랫따봉 확정) + /gesture.
+   - 디스플레이 선택지 출력.
+  [리프트]
+   - /lift_height 기반 P제어 실동작 + 세로 오토프레이밍(spatial_y).
+  [검증]
+   - 실주행 부호 확인(7장) → 게인 튜닝(kp_align vs kp_yaw 루프분리, d_dead).
+====================================================

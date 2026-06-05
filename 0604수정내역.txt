@@ -1,0 +1,432 @@
+============================================================================
+ 0604 수정내역 — 모드1 "선분 유지" 재작성
+============================================================================
+
+[배경]
+ 어제(0603) 모드1은 "azimuth→0 + 몸체yaw=kp_align*top_yaw_rate + distance→D"
+ 방식이었음. 대화로 모드1의 정의가 "선분 유지"로 확정되어 전면 재작성.
+
+ 모드1 = 주인-로봇을 잇는 선분의 [길이 D]와 [글로벌 각도 φ]를 모드 진입
+ 순간 캡처해 유지. 주인이 움직이면 선분이 평행이동하듯 로봇이 따라감.
+ - 트래킹 노드는 주인 "위치(점)"만 줌. 주인 yaw(방향) 없음.
+   → "주인 기준 상대각/궤도" 개념 폐기. 기준 방향은 글로벌(바닥 고정).
+ - 장애물 회피로 잠깐 선분이 틀어져도 목표는 불변 → 회피 후 자연 복귀.
+
+[하드웨어 확정 반영 (정산 시트 기준)]
+ - 메카넘 휠 ×4 : JGB37-520 12V 엔코더 110RPM + BTS7960  → 속도 명령
+ - 리프트 ×1    : NEMA23 스텝(5776) + DM542               → 위치 명령(높이)
+ - 상단 yaw ×1  : NEMA17 스텝(4234) + A4988               → 위치 명령(각도)
+ - ★상단 yaw가 스텝모터 → 펄스 수=각도라 현재 각 정확히 앎.
+   어제 고민하던 "θ_head 적분 추정"이 불필요해짐.
+ - ★IMU 없음(시트에 없음) → 로봇 글로벌 yaw는 휠 오도메트리 단독.
+
+[추정 구조 — 휠 오도메트리 ↔ 트래킹 상호 보완]
+ 새 클래스 StateEstimator 도입. 주인의 글로벌 위치를 합성:
+   bearing_g = robot.yaw(오도) + theta_head(상단yaw,스텝) - azimuth(카메라)
+   owner_g   = robot.pos + distance * (cos,sin bearing_g)
+ - 1단계(구현): 트래킹 끊김 시 직전 주인 글로벌 위치 hold(바닥고정이라 유효).
+ - 2단계(TODO): 주인 정지 시 오도메트리 yaw 드리프트 역보정(주인=느슨한 랜드마크).
+   이 클래스만 교체하면 되도록 인터페이스 격리.
+
+----------------------------------------------------------------------------
+ 파일별 변경
+----------------------------------------------------------------------------
+[types.hpp] 전면 개정
+ - Vec2 / Pose2D / wrapAngle / RobotOdom 추가(글로벌 평면 기하).
+ - ControlCommand 변경: 출력이 혼합 명령이 됨.
+     메카넘 = 속도(body_vx/vy/yaw_rate)
+     리프트 = 위치(lift_height_target + lift_active)
+     상단yaw= 위치(top_yaw_target + top_yaw_active)
+   기존 lift_vz / top_yaw_rate(속도) 제거.
+ - stopBody()/zero() 의미 정리(몸체정지 + 스텝은 현위치 유지).
+ - 좌표계 약속을 헤더 주석에 정리.
+
+[state_estimator.hpp] 신규
+ - 주인 글로벌 위치 추정 책임 분리. update()/ownerGlobal()/hasOwner().
+
+[controller.hpp] 개정
+ - ControlInput 구조체 신규(owner/robot/owner_global/theta_head/dt 묶음).
+   step() 시그니처를 묶음으로 바꿔 모드 확장 시 안정.
+ - IController 에 engage() 추가(모드 진입 시 유지기준 캡처).
+ - ControllerParams 선분유지용으로 교체:
+     상단yaw(kp_yaw/az_dead/w_top_max),
+     몸체위치(kp_pos/v_max/pos_dead),
+     몸체yaw(kp_byaw/w_body_max/byaw_dead/face_owner),
+     선분(seg_distance), 리프트(z_min/z_max/lift_default).
+   기존 거리PID/kp_align 계열 제거.
+
+[follow_controller.hpp] 전면 재작성
+ - engage(): 진입 시 주인-로봇 선분의 D, φ 캡처.
+ - step():
+     목표점 = owner_global - D*(cosφ, sinφ)
+     몸체 vx/vy = 글로벌 위치오차를 몸체프레임으로 회전변환 + 속도제한
+     몸체 yaw   = face_owner면 로봇이 주인 향하도록 글로벌 헤딩 추종
+     상단 yaw   = azimuth 줄이도록 목표각 증분(위치 명령, w_top_max로 변화율 제한)
+ - setSegment(d, dphi): 손동작 supervisor가 선분 갱신.
+ - 슬루레이트 자체 구현(pid.hpp 의존 제거; pid.hpp는 타 모드용으로 잔존).
+
+[control_node.hpp / .cpp] 재작성
+ - 구독 추가: /odom(nav_msgs/Odometry), /top_yaw_state(std_msgs/Float32).
+ - quat→yaw 변환(yawFromQuat). odom 타임아웃 추가.
+ - 흐름: 콜백 캐시 → controlStep()에서 estimator_.update() →
+         engage(최초1회) → follow_controller_.step() → obstacle_field_ → 발행.
+ - /follow_target: x=거리D, y=글로벌각 증분 → setSegment().
+ - publishStop(): 몸체정지 + 스텝 현위치 유지.
+
+[ControlCmd.msg] 변경
+ - lift_vz/top_yaw_rate(속도) → lift_height_target+lift_active,
+   top_yaw_target+top_yaw_active(위치)로 교체.
+
+[CMakeLists.txt / package.xml]
+ - nav_msgs 의존 추가(find_package, ament_target_dependencies, <depend>).
+
+[control_params.yaml] 선분유지 파라미터로 교체.
+
+----------------------------------------------------------------------------
+ 검증 (g++ ROS-free 시뮬, test_sim.cpp)
+----------------------------------------------------------------------------
+ T1 정적수렴 : 주인 정면2m, D=2 캡처 → 제자리 유지, 정착속도 0.     PASS
+ T2 부호     : 주인 우측(az>0) → top_yaw_target<0 (우측 회전).      PASS
+ T3 추종     : 주인 이동해도 선분 D·φ 보존(2.00→2.02, 0→0.02).      PASS
+ T4 끊김     : 트래킹 끊겨도 주인 글로벌 위치 hold.                  PASS
+ ※ colcon 빌드는 실제 PC(Humble/Jazzy)에서 확인 필요.
+
+----------------------------------------------------------------------------
+ 남은 일 / 실주행 체크
+----------------------------------------------------------------------------
+ - ★실주행 첫날: 주인 우측일 때 카메라가 실제로 우측으로 도는지(부호).
+   반대면 top 부호 또는 azimuth 부호 점검. 몸체 yaw +방향도 확인.
+ - ★휠 오도메트리 yaw 드리프트 체감 → 심하면 모드 재진입(선분 재캡처) or
+   StateEstimator 2단계(주인 랜드마크 보정) 착수.
+ - 상단yaw 언와인딩(2바퀴 한계): theta_soft_max 로직 미구현(자리만).
+ - 리프트 자동 프레이밍(spatial_y로 높이 조정): 미구현.
+ - 모드2(ORBIT)/3/4: enum+폴백만. ORBIT은 선분각 φ를 시간에 따라 돌리면
+   본 구조 거의 재사용 가능.
+ - /odom, /top_yaw_state 토픽명·타입 팀원 펌웨어와 합의 필요.
+============================================================================
+
+
+============================================================================
+ 0604 (2차) — 컨트롤 노드 리팩토링: 헤더/소스 분리 + 파라미터 통합
+============================================================================
+
+[배경]
+ 어제까지 클로드가 헤더(.hpp)에 함수 정의까지 넣어두어 가독성이 떨어짐.
+ 동작(로직) 변경 없이 구조만 정리. 트래킹 노드는 일절 건드리지 않음.
+
+[원칙]
+ - 헤더 = 선언 + 설계 설명 주석.  src/*.cpp = 정의.
+ - 튜닝 파라미터는 params.hpp 한 파일로 통합 (+ yaml과 기본값 일치 유지).
+ - 시그니처/토픽/메시지/제어 로직 모두 그대로 → 팀원 코드 영향 없음.
+
+----------------------------------------------------------------------------
+ 파일별 변경 (ros2_control_node)
+----------------------------------------------------------------------------
+[params.hpp] ★신규 — 튜닝값 전부 모음
+ - ControllerParams : 제어기 게인/한계 (controller.hpp에서 이동)
+ - ObstacleParams   : 회피 stop/slow 거리 (obstacle_field 내부값에서 승격)
+ - NodeParams       : ctrl_rate / 각종 timeout / 시작 모드
+ → 튜닝할 때 params.hpp + config/control_params.yaml 두 파일만 보면 됨.
+ → declareParams()의 기본값도 이 구조체에서 가져오므로 기본값 3중 관리
+   (헤더/declare/yaml)가 2중(헤더/yaml)으로 줄어듦.
+
+[헤더/소스 분리] 정의를 .cpp로 이동 (신규 .cpp 5개)
+ - types.hpp            → src/types.cpp           (wrapAngle, guardDt,
+                                                    ControlCommand::stopBody/zero)
+ - pid.hpp              → src/pid.cpp             (Pid, SlewRateLimiter)
+ - obstacle_field.hpp   → src/obstacle_field.cpp
+ - state_estimator.hpp  → src/state_estimator.cpp
+ - follow_controller.hpp→ src/follow_controller.cpp
+ - controller.hpp       : 순수가상 인터페이스라 정의 없음(그대로).
+                          ControllerParams는 params.hpp로 이동.
+
+[follow_controller.cpp] step() 내부를 단계별 private 함수로 분해 (가독성)
+ - updateTopYaw()         : 상단 yaw 목표각 갱신 (azimuth→0)
+ - computeBodyVelocity()  : 선분 끝점 추종 vx/vy (P제어+회전변환)
+ - computeBodyYawRate()   : face_owner 글로벌 헤딩 유지
+ - slew()/applyTopSoftLimit() : 헬퍼 유지
+ ※ 계산식·순서·부호 전부 동일. 동작 변경 없음.
+
+[control_node.hpp/.cpp]
+ - 낱개 멤버(ctrl_rate_, *_timeout_, obstacle_avoidance_)
+   → obstacle_params_/node_params_ 구조체로 교체.
+ - loadParams()가 세 구조체를 직접 채움 (반환값 → void).
+ - 콜백/제어 루프 로직 동일.
+
+[CMakeLists.txt]
+ - add_executable에 신규 .cpp 5개 추가 (각 줄에 역할 주석).
+
+[test/test_sim.cpp] ★신규 (어제 임시로 쓰고 버린 시뮬을 저장소에 영구화)
+ - ROS 없이 g++만으로 T1~T4 재검증 가능. 빌드 명령은 파일 상단 주석.
+
+[README.md] 갱신
+ - 구식 내용(0603 이전 "세 루프" 설명, 옛 토픽 목록) → 선분 유지 기준으로
+   재작성. 파일 구조표 + 시뮬 검증 방법 추가.
+
+----------------------------------------------------------------------------
+ 삭제
+----------------------------------------------------------------------------
+ - ros2_follow_node/ 패키지 전체 삭제 (구버전 팔로우 노드, 합의대로 제거).
+   현재 제어는 ros2_control_node가 전담.
+
+----------------------------------------------------------------------------
+ 검증
+----------------------------------------------------------------------------
+ g++ -Wall -Wextra 경고 0 + 시뮬 T1~T4 재실행:
+ T1 정적수렴 : D=2.00 캡처, 정착속도 0.0000, 위치오차 0          PASS
+ T2 부호     : azimuth=+0.464(우측) → top_target=-0.0400(CW)     PASS
+ T3 추종     : 주인 이동 후 D 2.00→2.00, φ 0→0.024 보존          PASS
+ T4 끊김     : 미탐지+로봇 이동에도 주인 글로벌 위치 hold        PASS
+ ※ colcon 빌드(메시지 생성 포함)는 실제 PC에서 확인 필요.
+
+[남은 일 — 어제 목록에서 변동 없음]
+ - 실주행 부호 확인(상단yaw/몸체yaw), 오도메트리 드리프트 체감
+ - 상단 yaw 언와인딩 / 리프트 자동 프레이밍 / 모드2~4
+ - 손동작 supervisor(/control_mode, /follow_target 발행) — 팀원 분담
+ - /odom, /top_yaw_state 토픽명·타입 팀원 펌웨어와 합의
+============================================================================
+
+
+============================================================================
+ 0604 (3차) — 모드2(ROTATE) 추가 + 손동작 조정 인터페이스(/adjust_cmd)
+============================================================================
+
+[배경 / 확정 사항]
+ - 모드2 = "제자리 회전 추적": 차체 위치 고정(vx=vy=0), 메카넘으로 몸체
+   yaw 회전만 해서 주인을 따라 돈다. 상단 yaw(OAK-D)도 주인 락온 유지
+   → 평상시 촬영 카메라(몸체 정면)와 OAK-D가 같은 방향(주인)을 본다.
+ - 손동작 명령으로 모드1의 선분(거리 D·각도 φ) 조정 제공.
+ - ★헤딩 오프셋: 촬영 카메라가 "주인만"이 아니라 주인에서 비낀 방향을
+   보게 하는 조정. OAK-D는 계속 주인 락온 → 추적은 유지하며 연출만 변경.
+ - 손동작 세부는 팀원 분담이므로, 제어 쪽은 "명령 한 줄로 받는 자리"만
+   확실하게 마련(AdjustCmd). 새 기능 = msg 상수 1개 + case 1줄.
+
+----------------------------------------------------------------------------
+ 파일별 변경 (ros2_control_node)
+----------------------------------------------------------------------------
+[msg/AdjustCmd.msg] ★신규 — 손동작 조정 명령 (확장 지점)
+ - 필드: param(무엇을) / value(값) / delta(true=증분, false=절대)
+ - 상수: PARAM_SEG_DISTANCE(0)   모드1 선분 거리 D
+         PARAM_SEG_ANGLE(1)      모드1 선분 글로벌각 φ
+         PARAM_HEADING_OFFSET(2) 몸체(촬영카메라) 헤딩 오프셋 [공통]
+         PARAM_LIFT_HEIGHT(3)    리프트 목표 높이 [공통]
+ - 기존 /follow_target(geometry_msgs/Vector3) 폐기 → /adjust_cmd 로 통합.
+   (geometry_msgs 의존 자체가 빠짐 — CMakeLists/package.xml에서 제거)
+
+[controller_base.hpp/.cpp] ★신규 — 모드 공통 베이스 (중복 제거)
+ - IController와 모드 제어기 사이 중간층. 공통 부품:
+     trackTopYaw()      상단 yaw 주인 락온 (azimuth→0, 모드1 코드 이동)
+     applyLift()        손동작 리프트 목표 반영 (z_min~z_max 클램프)
+     ownerBearing()     로봇→주인 글로벌 방위각
+     yawRateToHeading() 목표 헤딩 추종 P제어(불감대·상한)
+     writeBodyCommand() 슬루레이트 제한 + 직전값 관리
+ - 새 모드 추가 절차를 헤더 주석에 명시(상속→switch 한 줄→params 추가).
+
+[rotate_controller.hpp/.cpp] ★신규 — 모드2(ROTATE)
+ - step(): 몸체 vx=vy=0 고정, wz = (주인 방위+heading_offset) 추종,
+   상단 yaw/리프트는 베이스 공통 부품. 약 30줄로 끝남(공통화 효과).
+ - 게인은 모드1 몸체 yaw 계열(kp_byaw/w_body_max/byaw_dead) 재사용
+   → 새 파라미터 0개.
+
+[follow_controller.hpp/.cpp] ControllerBase 상속으로 개편
+ - 중복이던 상단yaw/슬루/리프트/몸체yaw 로직 → 베이스로 이동.
+   남은 것: 선분 캡처(engage), 선분 추종 속도(computeBodyVelocity).
+ - 몸체 yaw 목표에 heading_offset 가산: (주인방위 or 선분각)+offset.
+ - setSegment(d,dphi) → setSegDistance(v,delta)/setSegAngle(v,delta)로
+   분리(AdjustCmd의 delta/절대 의미와 1:1 대응).
+
+[types.hpp / controller.hpp]
+ - UserAdjust 구조체 신규: heading_offset / lift_height / lift_commanded.
+   ControlNode가 보유 → ControlInput.adjust로 매 스텝 전달.
+   ★모드를 바꿔도 오프셋·리프트 설정이 유지되는 이유(노드 소유).
+ - Mode enum: ORBIT(2, 미구현 자리) → ROTATE(2, 구현)로 교체.
+
+[control_node.hpp/.cpp]
+ - ★전략 패턴 전환: controllerFor(mode) 스위치가 활성 제어기 선택.
+   ("모드가 늘면 전환할 자리"라던 TODO 이행. follow_engaged_ → engaged_)
+ - adjustCallback(): AdjustCmd 라우팅. SEG_*→FollowController,
+   HEADING_OFFSET/LIFT_HEIGHT→adjust_(공유 상태). 모드 전환 시 유지.
+ - 모드 전환 시 이전 제어기 reset 후 새 제어기를 다음 스텝에 engage.
+
+[CMakeLists.txt / package.xml]
+ - AdjustCmd.msg 추가, controller_base/rotate_controller.cpp 추가,
+   geometry_msgs 의존 제거.
+
+[config/control_params.yaml] 주석만 갱신 (새 파라미터 없음).
+[README.md] 모드2/AdjustCmd 표/구조 갱신.
+
+----------------------------------------------------------------------------
+ 검증 (g++ -Wall -Wextra 경고 0, test_sim.cpp T1~T6)
+----------------------------------------------------------------------------
+ T1~T4 : 기존 모드1 테스트 전부 PASS (회귀 없음)
+ T5 모드2: 주인이 2m 반경 호를 따라 90도 이동 →
+           로봇 위치 (0.000,0.000) 고정, yaw오차 0.029rad 추종.   PASS
+ T6 오프셋: heading_offset=0.5 → 몸체 yaw 0.470(불감대 내 수렴),
+           OAK-D 잔류 azimuth 0.011rad (주인 락온 유지).          PASS
+
+[남은 일]
+ - supervisor(팀원)와 AdjustCmd 손동작 매핑 합의 (어떤 제스처=어떤 param).
+ - 실주행: 모드2 회전 부호, heading_offset 부호 확인.
+ - 모드1 선분각 φ 조정 UX: 증분 단위(예: 15도씩) supervisor에서 결정.
+ - 모드3(STATIONARY)/4(COMPOSE): ControllerBase 상속으로 쉽게 추가 가능.
+============================================================================
+
+
+============================================================================
+ 0605 — 손동작 세션 일시정지(/gesture_active → hold_body)
+============================================================================
+
+[배경]
+ "손동작 명령을 주면 주행을 정지하고 명령을 반영할 자리" 마련.
+ 명령 반영 자리는 기존 adjustCallback()이 담당. 빠져 있던 "정지"를 추가.
+
+[설계]
+ supervisor(팀원)가 따봉 인식 시 /gesture_active(std_msgs/Bool)=true,
+ 명령 확정/취소 시 false 발행. true 동안:
+  - 몸체(메카넘)만 정지. ★상단 yaw 락온·주인 추정·발행은 계속
+    → 정지 중에도 사용자를 계속 봐야 손동작 인식이 되므로.
+  - 모드1의 선분 목표는 불변 → 세션이 풀리면 위치오차로 자연 복귀.
+ 권장 시퀀스: 따봉 → true → 손동작 → /adjust_cmd → false → 재개.
+
+[변경 파일]
+ - controller.hpp   : ControlInput.hold_body 필드 추가.
+ - follow_controller.cpp : can_drive 조건에 !hold_body 추가 (한 줄).
+ - rotate_controller.cpp : 정지 조건에 hold_body 추가 (한 줄).
+ - control_node.hpp/.cpp : /gesture_active 구독 + gestureActiveCallback()
+   + controlStep()에서 in.hold_body = gesture_active_ 전달.
+ - README.md : 토픽 목록·권장 시퀀스 추가.
+ ※ 새 메시지/파라미터 없음. 제어기 쪽 수정은 조건 두 줄이 전부
+   (hold가 ControlInput으로 들어오므로 모드3/4도 자동 적용).
+
+[검증] test_sim.cpp T7 추가, T1~T7 ALL PASS (-Wall -Wextra 경고 0)
+ T7: hold 중 주인이 1m 이동 → 몸체 속도 0.0000·위치 고정,
+     OAK-D 잔류 azimuth 0.004(락온 유지) → 해제 후 D=2.00 자연 복귀.
+
+[참고 — 작업 중 이슈]
+ 파일 동기화 문제로 일부 파일 끝부분이 잘리는 현상이 있어 전체 재작성으로
+ 복구함. 빌드 전 git diff로 파일 끝(}; #endif 등) 확인 권장.
+============================================================================
+
+----------------------------------------------------------------------------
+ 0605 추가 — hold 급정지 → 감속 정지로 개선
+----------------------------------------------------------------------------
+ [문제] 손동작 hold 시 stopBodyAndClearSlew()가 속도를 즉시 0으로 꽂음
+        (출발은 슬루로 부드러운데 정지만 급정지 — 비대칭).
+ [수정] ControllerBase::stopBodySmooth() 신규: 목표 0으로 슬루
+        → body/yaw_accel_max 한계로 자연 감속 (0.4m/s 기준 0.5초).
+        정지 정책 이원화:
+         - 추정/오도 끊김       → stopBodyAndClearSlew (즉시, 안전 우선)
+         - 손동작 hold(계획 정지) → stopBodySmooth (감속)
+        follow/rotate 양쪽 적용. 새 파라미터 없음(기존 가속한계 재사용).
+ [참고] 제어 구조는 P제어+슬루레이트(가속 제한)이며 PID의 I/D항은 미사용
+        (pid.hpp는 예비). 감속의 "부드러움"은 슬루가 담당.
+ [검증] T8 추가: 전속(0.40m/s) 주행 중 hold → 25스텝(0.50s)에 걸쳐 단조
+        감속, 스텝당 감속 0.0160 = 한계와 일치. T1~T8 ALL PASS.
+
+----------------------------------------------------------------------------
+ 0605 추가 2 — 몸체 제어 P → PD 승격 (kd_pos / kd_byaw)
+----------------------------------------------------------------------------
+ [구성] 몸체 제어 3단: PD(추종) → 데드존(떨림 방지) → 슬루(가속 제한).
+        예비로 두었던 pid.hpp Pid 클래스를 실사용 (ki=0 → PD).
+  - 몸체 위치: FollowController 에 축별 Pid(pid_x_/pid_y_).
+    축별 PD → 벡터 크기 v_max 클램프 → 몸체 프레임 회전변환.
+    도착 판정(데드존)은 기존대로 오차 벡터 크기로 일괄 처리.
+  - 몸체 yaw: ControllerBase::yawRateToHeading() 이 yaw_pid_ 사용.
+    모드1·2 공통 적용 (불감대/상한은 Pid 내부 처리).
+  - D항 튐 방지: 정지(즉시/감속)·데드존 진입·모드 전환 시 PD 이력 reset.
+ [새 파라미터] kd_pos=0.15, kd_byaw=0.1 (params.hpp + yaml).
+  - 0이면 기존 P 동작과 동일. ★실주행 튜닝 순서: kd=0 → kp → kd.
+  - 주의: owner 추정 노이즈가 크면 D가 떨림을 유발할 수 있음 → kd 낮추기.
+ [구조 변경] ControllerBase::onConfigure() 훅 추가(파생 PID 세팅용).
+  yawRateToHeading/computeBodyVelocity 가 non-const 로 변경(PID 상태 보유).
+ [검증] T9 추가(주인 0.5m 급이동 스텝 입력): 오버슈트 P=0.0000 → PD=0.0000.
+  ※ 이상 시뮬(관성 없음)이라 P만으로도 오버슈트가 없어 차이가 안 보임.
+    D의 효과는 관성·지연이 있는 실차에서 나타남. 시뮬은 회귀 방지용
+    (PD가 P보다 나빠지지 않음 + 수렴 보장)으로 유지. T1~T9 ALL PASS.
+ [발표 멘트 제안] "상위 PD+데드존+가속제한(제어 노드) / 하위 휠 속도
+  PID(드라이버 노드) 2층 캐스케이드. 상위 D항이 접근 감쇠, 슬루가
+  메카넘 미끄럼 방지, 하위 PID가 바퀴 속도 추종을 담당."
+
+----------------------------------------------------------------------------
+ 0605 추가 3 — 속도 상한 "최종 클램프" + 안전 한계 파라미터 한곳 모음
+----------------------------------------------------------------------------
+ [배경] 휠모터(JGB37-520) 토크 여유가 적음 → v_max=0.4m/s 보수 유지.
+  기존에도 v_max 클램프는 있었으나 제어기 내부에만 있었음. 두 빈틈 보완:
+   ① 발행 직전 최종 관문 부재(미래 모드 버그/슬루 과도 구간에 무방비)
+   ② 안전 한계값이 게인 사이에 흩어져 있어 찾기 불편
+ [수정]
+  - applySafetyLimits() 신규 (types.hpp/.cpp):
+    평면속도 "벡터 크기" ≤ v_max (방향 보존 스케일링), |wz| ≤ w_body_max.
+    ControlNode::publish() 가 발행 직전에 항상 호출 → 어떤 모드/제어기
+    버그가 있어도 이 한계는 절대 못 넘음 (시연 중 폭주 방지 최종 방어선).
+  - params.hpp / control_params.yaml 재배치: 맨 위에 "★안전 한계" 블록
+    (v_max, w_body_max, body_accel_max, yaw_accel_max, w_top_max).
+    토크 관련 주의 주석 포함. 파라미터 이름은 그대로(코드 영향 없음).
+ [검증] T10 추가: vx=vy=1.0(크기1.41), wz=-5 과대 명령 →
+        크기 0.400(방향 보존), wz -1.00 클램프. T1~T10 ALL PASS.
+ [드라이버 쪽 전달 사항] 직진+회전 동시면 휠 하나의 속도는
+  v + (lx+ly)·wz 까지 커질 수 있음 → 역기구학 후 "휠 단위" 속도 상한
+  클램프(전 휠 비례 스케일다운)를 드라이버 노드에도 넣어달라고 할 것.
+
+============================================================================
+ 0605 검증 — 전체 코드 점검 결과 + 결함 3건 수정
+============================================================================
+ [정적 검사]
+  - g++ -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor 등 경고 0
+  - ASan+UBSan(메모리/미정의동작 검사)으로 T1~T11 실행: 위반 0
+  - params.hpp ↔ yaml 기본값 / declare ↔ load 커버리지 스크립트 대조: 일치
+
+ [로직 리뷰에서 찾은 결함 → 수정]
+  1) stale odom 오염: /odom 타임아웃 후에도 odom_.valid 가 true 로 남아
+     낡은 포즈로 주인 글로벌 위치가 계산될 수 있었음.
+     → controlStep 에서 타임아웃 시 odom_.valid=false (수신 시 자동 복구).
+  2) 상단yaw 목표 폭주: 스텝 드라이버가 멈추거나 늦으면 azimuth 가 안
+     줄어서 top_yaw_target_ 이 무한 누적(10초에 -8 rad).
+     → top_lead_max(기본 1.0 rad) 신설: 목표가 실측각(theta_head)보다
+       이만큼 이상 앞서지 못함. T11 로 검증 (-8.0 → -1.0 클램프).
+  3) 방위각 특이점: 주인이 로봇 바로 위(거리≈0)면 atan2 가 출렁여
+     yaw 명령이 요동. → ownerTooClose(0.15m) 가드: 코앞이면 헤딩 유지.
+
+ [시뮬 한계 재명시]
+  - T1~T11 은 "이상 로봇(관성·지연 없음)+같은 좌표 규약" 내부 일관성 검증.
+    부호 규약(azimuth/상단yaw/몸체yaw CCW)이 실제 하드웨어와 맞는지는
+    실차 첫 주행에서 반드시 확인 (반대면 해당 부호 1곳만 뒤집으면 됨).
+  - colcon 빌드(메시지 생성 포함)는 실제 PC 미확인.
+
+ [개선 제안 — 미구현, 우선순위 순]
+  1) /control_debug 토픽: 선분 D·φ, 주인 글로벌 추정, 모드, hold 상태를
+     발행 → 실주행 때 rqt_plot 으로 튜닝. (시연 전 강력 추천)
+  2) azimuth 지연 보상: 회전 중 카메라 파이프라인 지연(수십ms)만큼
+     주인 방위가 끌림. owner_pose 의 header.stamp 나이 × yaw rate 보정
+     한 줄을 StateEstimator 에 추가 가능. 실주행에서 출렁이면 착수.
+  3) AdjustCmd 선분 거리 범위 클램프(예: 0.5~3.0m): supervisor 가
+     이상값을 보내도 로봇이 과도하게 멀어지지 않게.
+  4) 드라이버 쪽: 휠 단위 속도 클램프(기전달) + /control_cmd 수신
+     타임아웃 워치독(제어 노드 죽으면 정지) 요청.
+  5) StateEstimator 2단계(주인=랜드마크로 오도 yaw 드리프트 보정)는
+     기존 TODO 유지 — 시연 길이가 짧으면 불필요할 수 있음.
+============================================================================
+
+----------------------------------------------------------------------------
+ 0605 추가 4 — 개선 제안 구현 (디버그 토픽 / 선분 클램프 / 지연보상 훅)
+----------------------------------------------------------------------------
+ 1) /control_debug (ControlDebug.msg 신규, 50Hz):
+    mode/engaged/hold/추정유효 + 주인 글로벌(gx,gy) + 선분 D·φ +
+    heading_offset + top_yaw_target + 실제 발행 명령(vx,vy,wz).
+    실주행 튜닝 시: ros2 topic echo /control_debug,
+                   rqt_plot /control_debug/cmd_vx 등.
+    드라이버는 이 토픽을 사용하지 않음(부하 무관, 끊겨도 무해).
+    ※ 최종 클램프를 publish 직전 controlStep 으로 이동(디버그에 실발행값
+      기록 목적). publish() 내부 클램프도 유지 — 멱등이라 이중 무해.
+ 2) 선분 거리 클램프: setSegDistance 가 seg_d_min(0.5)~seg_d_max(3.0)
+    범위로 제한. supervisor 이상값 방어. ★engage 캡처는 의도적으로
+    클램프 안 함 — "진입 순간 로봇이 안 움직인다" 약속 유지.
+ 3) 카메라 지연 보상 훅: camera_latency(NodeParams, ★기본 0=꺼짐).
+    azimuth_now ≈ azimuth_cam + (몸체wz + 상단yaw속도)×latency.
+    몸체 wz는 /odom twist, 상단 속도는 theta_head 차분으로 추정.
+    실차에서 회전 중 추정이 끌리면 0.05~0.15 시도, 반대로 끌리면 즉시 0.
+    (부호 미검증 상태라 기본 꺼짐으로 안전하게 둠)
+ [검증] T12(선분 클램프) 추가, T1~T12 ALL PASS + ASan/UBSan 통과.
+        params↔yaml↔declare↔load + ControlDebug 필드 대조 스크립트 일치.
+ [남음] colcon 빌드(메시지 2종 생성 포함) 실제 PC 확인,
+        드라이버 쪽 휠 단위 클램프·/control_cmd 워치독 (팀원 요청 사항).

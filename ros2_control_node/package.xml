@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ros2_control_node</name>
+  <version>0.1.0</version>
+  <description>
+    팔로잉 로봇 제어 노드. 트래킹(/owner_pose) 정보로 6자유도 속도명령
+    (몸체 vx/vy/yaw, 리프트 vz, 상단 yaw)을 산출. 측면 근접센서 기반
+    간단 장애물 회피 포함. 모드1(FOLLOW)·모드2(ROTATE) 구현.
+  </description>
+  <maintainer email="jwda15@users.noreply.github.com">jwda15</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>ros2_tracking_node</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
