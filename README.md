@@ -16,7 +16,7 @@ detector ──/detections──▶ tracking_node ──/owner_pose──▶ con
 노드 사이는 토픽으로만 연결된다. detector를 갈아끼워도(OAK / RealSense / 데이터셋)
 뒷단은 그대로 동작한다.
 
-## detector — `ros2_yolo_oak/`, `ros2_yolo_d435i/`
+## detector — `ros2_yolo_oak/`
 
 사람을 검출해 bbox(픽셀)와 depth(mm)를 발행한다. 누가 주인인지는 모른다.
 
@@ -25,7 +25,7 @@ detector ──/detections──▶ tracking_node ──/owner_pose──▶ con
 - `ros2_yolo_d435i/yolo_detector.py` — ultralytics YOLO. RealSense나 저장된 영상 검증용
 - `tum_publisher.py`(루트) — TUM RGB-D 데이터셋을 카메라 토픽으로 재생
 
-## tracking_node — `ros2_tracking_node/` + `src/`, `include/`
+## tracking_node — `ros2_tracking_node/`
 
 검출들을 ByteTrack으로 추적하고 그중 주인 한 명을 특정해 3D 위치를 발행한다.
 
