@@ -430,3 +430,45 @@
         params↔yaml↔declare↔load + ControlDebug 필드 대조 스크립트 일치.
  [남음] colcon 빌드(메시지 2종 생성 포함) 실제 PC 확인,
         드라이버 쪽 휠 단위 클램프·/control_cmd 워치독 (팀원 요청 사항).
+
+============================================================================
+ 0605 — 손동작 노드(ros2_gesture_node) 신규 구현
+============================================================================
+ [설계 합의]
+ - 인식 모델: HaGRID 사전학습 YOLO 검출기 채택 (MediaPipe는 폴백으로 강등).
+   근거: HaGRID는 카메라-사람 0.5~4m 조건으로 수집된 표준 데이터셋이라
+   우리 사용 거리(1.5~3m)에 적합. ultralytics 로드라 .pt/.onnx/.engine 공용,
+   Jetson GPU(TensorRT) 실행 가능. MediaPipe는 근거리 설계 + CPU-only.
+ - 실행 위치: Jetson 호스트 (OAK 온보드는 YOLO 사람검출 전용 유지).
+   입력은 기존 /oak/rgb/image_raw (512x384, publish_rgb 파라미터).
+ - 어휘: like(트리거)/one~four(번호)/palm(뒤로·닫기) 6종.
+   ★five는 palm과 같은 손모양이라 메뉴 번호에서 제외(사용자 지적).
+   HaGRID 클래스 별칭 통합: two_up·peace→two, three2→three, stop→palm 등.
+ - 메뉴: 따봉 1.5s → 메인(one 주행모드 / two 거리·구도 / three 리프트 /
+   four 촬영·시스템) → 세부. 선택=1.5s 유지, palm=뒤로, 10s 타임아웃.
+   조절 항목(stay)은 실행 후 메뉴 유지 + 유지 시 1.5s마다 반복.
+   카테고리 진입 후 릴리즈 요구(연속 오선택 방지).
+ - LCD(7" HDMI 1024x600, Jetson 연결)에 메뉴 UI 표시. 디자인은 추후.
+
+ [파일]
+ - menu.py        : 메뉴 트리(build_menu, 데이터로 정의—확장은 여기만)
+                    + MenuStateMachine(유지/끊김허용/타임아웃/릴리즈, ROS무관)
+ - recognizer.py  : HagridYoloRecognizer(ultralytics) / MockRecognizer
+ - gesture_node.py: 구독(/oak/rgb/image_raw 또는 /gesture_mock) →
+                    발행(/gesture_active, /control_mode, /adjust_cmd,
+                    /phone_cmd·/system_cmd[자리], /gesture_ui JSON).
+                    IDLE 5fps / 메뉴 15fps 추론 주기 절감.
+ - ui_node.py     : pygame LCD 렌더(경로/항목/유지 진행바), 콘솔 폴백.
+ - config/gesture_params.yaml, launch/gesture.launch.py
+ - test/test_menu.py : 상태기계 10케이스 — 트리거/짧은유지 무시/끊김허용/
+                    모드선택/연속조절 반복/뒤로·닫기/타임아웃/릴리즈요구/
+                    무효제스처/폰명령. 전부 PASS (pytest, ROS 불필요).
+
+ [컨트롤 노드 수정 없음] 기존 인터페이스(/gesture_active, /adjust_cmd,
+  /control_mode)에 그대로 발행 — supervisor 자리에 꽂힌 것.
+
+ [남은 일]
+ - HaGRID YOLO 체크포인트 다운로드 + 라이선스 확인 + 2~3m 실측
+   (부족하면 OAK 고해상 스트림 추가 or MediaPipe Pose 폴백)
+ - 주인 bbox ROI(행인 손 무시), LCD UI 디자인, 폰/전원 수신측
+============================================================================

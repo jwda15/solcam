@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ros2_gesture_node</name>
+  <version>0.1.0</version>
+  <description>
+    손동작 supervisor. OAK RGB에서 HaGRID 제스처를 인식해 계층 메뉴
+    (따봉 트리거 → 카테고리 → 세부)를 운영하고, 제어 노드에
+    /gesture_active, /control_mode, /adjust_cmd 를 발행한다. LCD UI 포함.
+  </description>
+  <maintainer email="jwda15@users.noreply.github.com">jwda15</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>ros2_control_node</depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- 추가 의존(수동 설치): pip install ultralytics pygame
+       recognizer=mock 이면 둘 다 없어도 동작 -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
