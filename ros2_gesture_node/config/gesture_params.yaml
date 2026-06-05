@@ -5,7 +5,9 @@
 gesture_node:
   ros__parameters:
     recognizer: hagrid        # hagrid | mock (mock: /gesture_mock 주입 테스트)
-    model_path: models/hagrid_yolo.pt   # HaGRID 사전학습 YOLO (.pt/.onnx/.engine)
+    # HaGRID 사전학습 YOLO (models/download.sh 로 다운로드).
+    # ★실행 머신에서는 절대경로 권장 (예: /home/jetson/solcam/ros2_gesture_node/models/...)
+    model_path: models/YOLOv10n_gestures.pt
     conf_threshold: 0.5       # 검출 신뢰도 문턱
     image_topic: /oak/rgb/image_raw     # oak_detector publish_rgb=true 필요
     idle_rate: 5.0            # Hz, IDLE 중 like 감시 주기 (부하 절감)

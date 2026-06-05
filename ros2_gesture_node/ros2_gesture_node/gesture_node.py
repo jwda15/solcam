@@ -40,7 +40,7 @@ class GestureNode(Node):
         super().__init__("gesture_node")
         # ----- 파라미터 (기본값은 config/gesture_params.yaml 과 일치 유지) -----
         self.declare_parameter("recognizer", "hagrid")      # hagrid | mock
-        self.declare_parameter("model_path", "models/hagrid_yolo.pt")
+        self.declare_parameter("model_path", "models/YOLOv10n_gestures.pt")
         self.declare_parameter("conf_threshold", 0.5)
         self.declare_parameter("image_topic", "/oak/rgb/image_raw")
         self.declare_parameter("idle_rate", 5.0)            # Hz, IDLE 감시 주기

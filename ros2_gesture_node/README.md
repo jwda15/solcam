@@ -43,9 +43,9 @@ like 1.5s ─▶ 메인 메뉴
 ## 준비물
 
 ```bash
-pip install ultralytics pygame    # mock 모드는 둘 다 불필요
-# HaGRID 사전학습 YOLO 체크포인트를 받아 model_path에 배치
-#   https://github.com/hukenovs/hagrid (YOLOv10 detector, 라이선스 확인)
+pip install "ultralytics>=8.2" pygame   # mock 모드는 둘 다 불필요
+./models/download.sh                     # YOLOv10n_gestures.pt (22MB)
+# 모델 라이선스: CC BY-SA 4.0 변형 (hagrid 저장소 license/ 참조) → 깃에 커밋 금지
 ```
 
 ## 실행

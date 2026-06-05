@@ -39,7 +39,14 @@ class HagridYoloRecognizer(Recognizer):
     """
 
     def __init__(self, model_path: str, conf_threshold: float = 0.5, imgsz: int = 640):
+        import os
         from ultralytics import YOLO   # 지연 임포트 (mock 모드는 불필요)
+        model_path = os.path.expanduser(model_path)
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(
+                f"제스처 모델이 없음: {model_path} — "
+                "ros2_gesture_node/models/download.sh 로 받고, "
+                "gesture_params.yaml 의 model_path 를 절대경로로 설정하세요.")
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
         self.imgsz = imgsz
