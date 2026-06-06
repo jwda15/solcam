@@ -97,6 +97,9 @@ class Preview:
         for ev in self.sm.update(self.held, t):
             if ev.kind == "action" and ev.action and ev.action.kind == "mode":
                 self.mode = ev.action.payload.get("mode", self.mode)
+            elif (ev.kind == "action" and ev.action and ev.action.kind == "phone"
+                  and ev.action.payload.get("cmd") == "record_toggle"):
+                self._toggle_rec()   # 프리뷰: 폰 대신 직접 토글(라벨 ON/OFF 확인용)
         self._draw(self.sm.snapshot())
         self.win.after(33, self._loop)
 
@@ -204,8 +207,11 @@ class Preview:
                 if active:
                     self._border_lr(x, y, cw, ch, min(1.0, prog))
                 txtcol = WHITE
+            label = it["label"]
+            if label == "Rec":   # 녹화 토글: 상태에 따라 ON/OFF
+                label = "Rec OFF" if self.recording else "Rec ON"
             c.create_text(x+cw//2, y+ch//2,
-                          text=f"{GNUM.get(it['gesture'],'')}  {it['label']}",
+                          text=f"{GNUM.get(it['gesture'],'')}  {label}",
                           fill=txtcol, font=("Segoe UI", 15, "bold"))
         # 거꾸로 따봉(back) 게이지 — 카드 위 중앙
         if hold_g == "dislike":

@@ -585,3 +585,12 @@
    3) 메인 4번(Other)에 'Rec' 추가 — 폰 촬영 시작/종료 토글
       (phone/record_toggle → /phone_cmd). test_menu에 케이스 추가(12건 PASS).
    - menu/hud/ui_preview_tk 동일 적용.
+
+ - UI 4차 피드백 반영 (0606):
+   1) Rec 카드 라벨 상태 연동: 녹화 전 'Rec ON'(시작), 녹화 중 'Rec OFF'(종료).
+      hud._draw_dock 에 recording 전달해 라벨 스왑. 프리뷰도 self.recording 사용.
+   2) 폰 연동 슬롯 확인(이미 구비): ui_node 가 /phone/battery(BatteryState→%),
+      /phone/recording(Bool→상단 REC시간), /phone/image(없으면 /oak 폴백) 구독.
+      gesture Rec → /phone_cmd 'record_toggle' 발행 → (추후 phone_bridge가
+      폰 녹화 토글 후 /phone/recording 회신) → UI 가 실제 상태 반영.
+   3) 프리뷰: Rec 카드 누르면 self._toggle_rec() 로 직접 토글(ON/OFF 확인용).

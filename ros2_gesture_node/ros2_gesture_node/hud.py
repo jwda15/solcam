@@ -54,7 +54,7 @@ class Hud:
         self._draw_video(scr, w, h, frame)
         self._draw_topbar(scr, w, mode, battery, recording, rec_start)
         if snapshot.get("state") == "MENU":
-            self._draw_dock(scr, w, h, snapshot)
+            self._draw_dock(scr, w, h, snapshot, recording)
         else:
             self._hint(scr, w, h, "thumbs-up to open")
             # 따봉 게이지
@@ -132,7 +132,7 @@ class Hud:
         pg.draw.rect(scr, ACCENT, (x, y, int(bw * min(1.0, frac)), bh), border_radius=3)
 
     # ----- 하단 메뉴 독 -----
-    def _draw_dock(self, scr, w, h, snap):
+    def _draw_dock(self, scr, w, h, snap, recording=False):
         pg = self.pg
         items = snap.get("items", [])
         if not items:
@@ -149,15 +149,19 @@ class Hud:
             rect = pg.Rect(x0 + i * (cw + gap), y0, cw, ch)
             self._last_rects[it["gesture"]] = rect
             active = (it["gesture"] == hold_g and prog > 0)
+            disp = it
+            if it["label"] == "Rec":   # 녹화 토글: 상태에 따라 ON/OFF 표시
+                disp = {"gesture": it["gesture"],
+                        "label": "Rec OFF" if recording else "Rec ON"}
             if active and repeating:
                 self._panel(scr, rect, (255, 255, 255), 245)       # 연속=흰 카드
-                self._card_text(scr, rect, it, INK, INK)
+                self._card_text(scr, rect, disp, INK, INK)
             else:
                 self._panel(scr, rect, (255, 255, 255), 22)
                 self._border(scr, rect, BASE_BORDER, 255, 2)
                 if active:
                     self._border_fill_lr(scr, rect, prog, FILL, 255, 3)  # 파랑 좌→우
-                self._card_text(scr, rect, it, WHITE if active else DIM, WHITE)
+                self._card_text(scr, rect, disp, WHITE if active else DIM, WHITE)
         # 거꾸로 따봉(back) 게이지 — 카드 위 중앙
         if hold_g == "dislike":
             self._gauge(scr, w // 2, y0 - 16, prog)
