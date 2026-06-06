@@ -594,3 +594,13 @@
       gesture Rec → /phone_cmd 'record_toggle' 발행 → (추후 phone_bridge가
       폰 녹화 토글 후 /phone/recording 회신) → UI 가 실제 상태 반영.
    3) 프리뷰: Rec 카드 누르면 self._toggle_rec() 로 직접 토글(ON/OFF 확인용).
+
+ - 폰 연동: ros2_phone_bridge 패키지 신설 (0606):
+   * scrcpy(USB) 후면카메라 → v4l2loopback(/dev/videoN) → cv2 → /phone/image
+   * adb dumpsys battery → /phone/battery (BatteryState)
+   * /phone_cmd record_toggle → ffmpeg 로 v4l2 녹화 시작/종료, 종료 시
+     adb push 로 폰 DCIM/solcam 에 전송 → /phone/recording 발행
+   * zoom/focus 는 자리만(로그) — scrcpy 카메라 런타임 줌 한계로 추후
+   * mock:=true 면 폰/도구 없이 합성영상+가짜배터리로 동작(UI 배선 점검)
+   * 셋업 스크립트(v4l2loopback/scrcpy) + launch + README + 배터리파싱 테스트(4건)
+   * 별도 안드로이드 앱 개발 불필요. 줌/포커스는 캡처 방식 확정 후 진행 예정.

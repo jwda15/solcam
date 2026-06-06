@@ -11,7 +11,7 @@ ROS 토픽을 받아 Hud(hud.py)로 렌더한다. 디자인/그리기는 전부 
   /phone/battery (BatteryState)  배터리 %
   /phone/recording (Bool)    녹화 중 여부
 
-pygame/디스플레이 없으면 콘솔 폴백. /phone/* 는 아직 자리만(안드로이드 브리지 추후).
+pygame/디스플레이 없으면 콘솔 폴백. /phone/* 는 ros2_phone_bridge(scrcpy/adb)가 발행.
 """
 import json
 import time

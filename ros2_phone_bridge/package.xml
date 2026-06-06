@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ros2_phone_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    안드로이드 폰(촬영 카메라) ↔ Jetson USB 브리지.
+    scrcpy 카메라 스트림(v4l2)을 /phone/image 로 발행하고, adb 로 배터리를
+    /phone/battery 로 발행한다. /phone_cmd 를 받아 녹화(record_toggle)는
+    Jetson 측 ffmpeg 로 저장 후 종료 시 adb push 로 폰에 넘긴다.
+    (줌/포커스는 자리만 — 추후 구현)
+  </description>
+  <maintainer email="jwda15@users.noreply.github.com">jwda15</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- 시스템 도구(수동 설치): adb(android-tools-adb), scrcpy(>=2.0),
+       ffmpeg, v4l2loopback-dkms. 영상은 python3-opencv(cv2)로 읽음.
+       mock:=true 이면 폰/도구 없이도 합성 영상으로 동작 -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
