@@ -96,7 +96,8 @@ def probe_camera(ffmpeg, device):
 class CameraStream:
     """ffmpeg 서브프로세스에서 고정크기 rgb24 프레임을 계속 읽어 보관."""
 
-    def __init__(self, ffmpeg, device, w, h, fps, input_format, codec=None):
+    def __init__(self, ffmpeg, device, w, h, fps, input_format, codec=None,
+                 in_size=None, in_fps=None, in_pixfmt=None):
         self.w, self.h = w, h
         self.frame_bytes = w * h * 3
         self._latest = None
@@ -106,7 +107,14 @@ class CameraStream:
         cmd = [ffmpeg, "-hide_banner", "-loglevel", "warning"]
         if input_format == "dshow":
             cmd += ["-rtbufsize", "100M"]
-            if codec:                       # 가상카메라는 보통 mjpeg
+            # ★dshow는 장치가 지원하는 입력 모드를 정확히 열어야 함(--probe로 확인)
+            if in_fps:
+                cmd += ["-framerate", str(in_fps)]
+            if in_size:
+                cmd += ["-video_size", in_size]
+            if in_pixfmt:
+                cmd += ["-pixel_format", in_pixfmt]
+            if codec:
                 cmd += ["-vcodec", codec]
             cmd += ["-f", "dshow", "-i", f"video={device}"]
         else:
@@ -401,6 +409,9 @@ def main():
     ap.add_argument("--list-cameras", action="store_true", help="카메라 장치 목록 출력 후 종료")
     ap.add_argument("--probe", action="store_true", help="--camera 의 지원 해상도/코덱 출력 후 종료")
     ap.add_argument("--cam-codec", help="입력 코덱 지정 (가상카메라는 보통 mjpeg)")
+    ap.add_argument("--cam-insize", help="입력(장치) 해상도 WxH — --probe 로 확인 (예 1280x720)")
+    ap.add_argument("--cam-infps", type=int, help="입력(장치) 프레임레이트 (예 30)")
+    ap.add_argument("--cam-pixfmt", help="입력 픽셀포맷 (예 yuyv422, nv12)")
     ap.add_argument("--ffmpeg", help="ffmpeg 실행파일 경로(미지정 시 자동 탐색)")
     ap.add_argument("--cam-size", default="1024x576", help="WxH (기본 1024x576)")
     ap.add_argument("--cam-fps", type=int, default=12)
@@ -424,7 +435,8 @@ def main():
             try:
                 w, h = (int(v) for v in a.cam_size.lower().split("x"))
                 cam = CameraStream(ffmpeg, a.camera, w, h, a.cam_fps,
-                                   a.input_format, a.cam_codec)
+                                   a.input_format, a.cam_codec,
+                                   a.cam_insize, a.cam_infps, a.cam_pixfmt)
                 print(f"[cam] {a.camera} {w}x{h}@{a.cam_fps} 시작")
             except Exception as e:
                 print(f"[cam] 시작 실패({e}) — 배경 없이 진행")
