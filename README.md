@@ -89,6 +89,14 @@ g++ -std=c++17 -Iinclude src/types.cpp src/pid.cpp src/obstacle_field.cpp \
 리프트(NEMA23+DM542)·상단yaw(NEMA17+A4988)는 스텝 펄스로 변환한다.
 `/odom`(휠 엔코더)과 `/top_yaw_state` 발행도 이쪽 담당.
 
+## 촬영 카메라(폰) — `ros2_phone_bridge/`
+
+촬영은 안드로이드 폰이 한다. 폰을 USB로 Jetson에 꽂으면 scrcpy가 후면 카메라를
+가상 비디오 장치로 흘려보내고, 브리지 노드가 이를 `/phone/image`로, adb로 읽은
+배터리를 `/phone/battery`로 발행한다. 손동작 녹화 명령(`/phone_cmd`)을 받으면
+Jetson에서 받아 저장한 뒤 종료 시 `adb push`로 폰에 넘긴다. 별도 앱은 없다.
+LCD UI(`ros2_gesture_node/ui_node`)가 이 토픽들을 받아 영상·배터리·녹화시간을 띄운다.
+
 ## 빌드
 
 경로에 공백·한글이 있으면 colcon 메시지 생성이 깨지므로, 빌드는 영문 경로

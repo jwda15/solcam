@@ -58,7 +58,7 @@ pip install pygame numpy
 cd ros2_gesture_node
 python tools/ui_preview.py
 ```
-L=따봉(메뉴 열기) · 1~4=선택(꾹) · P=손바닥(뒤로/닫기) · R=REC · B=배터리 · ESC.
+L=따봉(메뉴 열기) · 1~4=선택(꾹) · K=거꾸로 따봉(뒤로/닫기) · R=REC · B=배터리 · ESC.
 
 pygame 설치가 안 되면(예: Python 3.14처럼 최신이라 pygame wheel이 아직 없으면)
 설치가 전혀 필요 없는 tkinter 버전을 쓴다 — 키/동작 동일:
@@ -66,8 +66,19 @@ pygame 설치가 안 되면(예: Python 3.14처럼 최신이라 pygame wheel이 
 ```bash
 python tools/ui_preview_tk.py
 ```
-실제 상태기계(menu.py)+렌더(hud.py)를 그대로 써서 LCD에 뜨는 화면과 동일하다
-(배경 영상만 없어 CAMERA 표시).
+실제 상태기계(menu.py)를 그대로 써서 동작·타이밍이 LCD와 동일하다
+(배경 영상만 없으면 CAMERA 표시).
+
+### 폰 카메라를 배경에 깔기 (Windows)
+
+폰을 윈도우에서 웹캠으로 잡으면(안드 14+ USB 웹캠 모드, 또는 DroidCam/Iriun)
+프리뷰 배경에 실제 폰 영상이 깔린다. cv2/pygame 불필요 — ffmpeg만 쓴다:
+
+```bash
+pip install imageio-ffmpeg                       # ffmpeg 바이너리 자동(또는 시스템 ffmpeg)
+python tools/ui_preview_tk.py --list-cameras     # 장치 이름 확인
+python tools/ui_preview_tk.py --camera "장치이름"  # 그 카메라를 배경으로
+```
 
 ## 실행
 

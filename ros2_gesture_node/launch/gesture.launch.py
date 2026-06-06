@@ -17,9 +17,11 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('ui', default_value='true'),
         DeclareLaunchArgument('recognizer', default_value='hagrid'),
+        DeclareLaunchArgument('image_topic', default_value='/oak/rgb/image_raw'),
         Node(package='ros2_gesture_node', executable='gesture_node',
              parameters=[params,
-                         {'recognizer': LaunchConfiguration('recognizer')}],
+                         {'recognizer': LaunchConfiguration('recognizer'),
+                          'image_topic': LaunchConfiguration('image_topic')}],
              output='screen'),
         Node(package='ros2_gesture_node', executable='ui_node',
              parameters=[params], output='screen',
