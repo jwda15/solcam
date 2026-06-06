@@ -83,24 +83,53 @@ def list_cameras(ffmpeg):
     print(out)
 
 
+def probe_camera(ffmpeg, device):
+    """해당 카메라가 지원하는 해상도/코덱(픽셀포맷)을 출력."""
+    if not ffmpeg:
+        print("ffmpeg 없음: pip install imageio-ffmpeg"); return
+    r = subprocess.run([ffmpeg, "-hide_banner", "-f", "dshow",
+                        "-list_options", "true", "-i", f"video={device}"],
+                       capture_output=True)
+    print((r.stderr or b"").decode("utf-8", errors="replace"))
+
+
 class CameraStream:
     """ffmpeg 서브프로세스에서 고정크기 rgb24 프레임을 계속 읽어 보관."""
 
-    def __init__(self, ffmpeg, device, w, h, fps, input_format):
+    def __init__(self, ffmpeg, device, w, h, fps, input_format, codec=None):
         self.w, self.h = w, h
         self.frame_bytes = w * h * 3
         self._latest = None
         self._seq = 0
         self._lock = threading.Lock()
         self._stop = False
-        inp = f"video={device}" if input_format == "dshow" else device
-        cmd = [ffmpeg, "-hide_banner", "-loglevel", "error",
-               "-f", input_format, "-i", inp,
-               "-s", f"{w}x{h}", "-pix_fmt", "rgb24", "-r", str(fps),
-               "-f", "rawvideo", "-"]
+        cmd = [ffmpeg, "-hide_banner", "-loglevel", "warning"]
+        if input_format == "dshow":
+            cmd += ["-rtbufsize", "100M"]
+            if codec:                       # 가상카메라는 보통 mjpeg
+                cmd += ["-vcodec", codec]
+            cmd += ["-f", "dshow", "-i", f"video={device}"]
+        else:
+            cmd += ["-f", input_format, "-i", device]
+        cmd += ["-s", f"{w}x{h}", "-pix_fmt", "rgb24", "-r", str(fps),
+                "-f", "rawvideo", "-"]
+        self._err = bytearray()
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL)
+                                     stderr=subprocess.PIPE)
+        threading.Thread(target=self._drain_err, daemon=True).start()
         threading.Thread(target=self._reader, daemon=True).start()
+
+    def _drain_err(self):
+        for line in iter(self.proc.stderr.readline, b""):
+            self._err += line
+            if len(self._err) > 8000:
+                del self._err[:-8000]
+
+    def error_text(self):
+        return bytes(self._err).decode("utf-8", errors="replace")
+
+    def alive(self):
+        return self.proc.poll() is None
 
     def _reader(self):
         fb = self.frame_bytes
@@ -141,6 +170,8 @@ class Preview:
         self._photo = None
         self._photo_seq = -1
         self._cam_ok = cam is not None
+        self._cam_t0 = time.time()
+        self._cam_reported = False
 
         self.held = None
         self._rel_job = None
@@ -233,9 +264,24 @@ class Preview:
         if self._update_photo() and self._photo is not None:
             c.create_image(W//2, H//2, image=self._photo, anchor="center")
         else:
-            msg = "connecting camera..." if self.cam else "CAMERA"
+            msg = "CAMERA"
+            if self.cam:
+                msg = "connecting camera..."
+                # 몇 초째 프레임이 없으면 ffmpeg 에러를 콘솔에 한 번 출력
+                if (not self._cam_reported and time.time() - self._cam_t0 > 4
+                        and self._photo is None):
+                    self._cam_reported = True
+                    dead = not self.cam.alive()
+                    print("[cam] 영상이 안 들어옵니다." +
+                          (" (ffmpeg 종료됨)" if dead else ""))
+                    print("----- ffmpeg 메시지 -----")
+                    print(self.cam.error_text() or "(없음)")
+                    print("-------------------------")
+                    print("팁: --probe 로 지원 포맷 확인 후 --cam-codec mjpeg "
+                          "와 --cam-size 를 맞춰보세요.")
+                    msg = "camera failed - see console"
             c.create_text(W//2, H//2, text=msg, fill="#2a2f37",
-                          font=("Segoe UI", 30, "bold"))
+                          font=("Segoe UI", 26, "bold"))
         self._detect_confirm(snap)
         self._topbar()
         if snap.get("state") == "MENU":
@@ -353,6 +399,8 @@ def main():
     ap = argparse.ArgumentParser(description="solcam LCD 프리뷰 (tkinter)")
     ap.add_argument("--camera", help="배경에 깔 카메라 장치 이름(dshow) 또는 경로(v4l2)")
     ap.add_argument("--list-cameras", action="store_true", help="카메라 장치 목록 출력 후 종료")
+    ap.add_argument("--probe", action="store_true", help="--camera 의 지원 해상도/코덱 출력 후 종료")
+    ap.add_argument("--cam-codec", help="입력 코덱 지정 (가상카메라는 보통 mjpeg)")
     ap.add_argument("--ffmpeg", help="ffmpeg 실행파일 경로(미지정 시 자동 탐색)")
     ap.add_argument("--cam-size", default="1024x576", help="WxH (기본 1024x576)")
     ap.add_argument("--cam-fps", type=int, default=12)
@@ -363,6 +411,10 @@ def main():
     ffmpeg = find_ffmpeg(a.ffmpeg)
     if a.list_cameras:
         list_cameras(ffmpeg); return
+    if a.probe:
+        if not a.camera:
+            print("--probe 는 --camera \"이름\" 과 함께 쓰세요"); return
+        probe_camera(ffmpeg, a.camera); return
 
     cam = None
     if a.camera:
@@ -371,7 +423,8 @@ def main():
         else:
             try:
                 w, h = (int(v) for v in a.cam_size.lower().split("x"))
-                cam = CameraStream(ffmpeg, a.camera, w, h, a.cam_fps, a.input_format)
+                cam = CameraStream(ffmpeg, a.camera, w, h, a.cam_fps,
+                                   a.input_format, a.cam_codec)
                 print(f"[cam] {a.camera} {w}x{h}@{a.cam_fps} 시작")
             except Exception as e:
                 print(f"[cam] 시작 실패({e}) — 배경 없이 진행")
