@@ -46,8 +46,8 @@ class Preview:
         self.sm = MenuStateMachine(build_menu(adj))
         self.mode = 1
         self.battery = 87
-        self.recording = True
-        self.rec_start = time.time() - 134
+        self.recording = False        # 초기: 녹화 꺼짐 (R 또는 Rec 카드로 시작)
+        self.rec_start = 0.0
         self.t0 = time.time()
 
         self.held = None
