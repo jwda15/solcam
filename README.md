@@ -50,7 +50,8 @@ detector ──/detections──▶ tracking_node ──/owner_pose──▶ con
 모터 개수나 추력은 모른다 — 자유도 명령까지만 내고, 모터 매핑은 driver 책임.
 
 - 구독: `/owner_pose`, `/odom`, `/top_yaw_state`(상단 스테이지 현재각),
-  `/control_mode`, `/gesture_active`, `/adjust_cmd`(손동작), `/proximity`(근접센서)
+  `/control_mode`, `/gesture_active`, `/adjust_cmd`(손동작), `/proximity`(근접센서),
+  `/teleop_cmd`(Twist, 모드0 키보드 수동주행)
 - 발행: `/control_cmd` (메카넘=속도, 리프트·상단yaw=위치 목표), `/control_debug`(튜닝용)
 
 파일은 헤더(include/)에 선언, src/에 정의. 클래스별 역할:
@@ -59,6 +60,7 @@ detector ──/detections──▶ tracking_node ──/owner_pose──▶ con
 |------|------|
 | `control_node.cpp` | ROS 입출력과 50Hz 제어 루프(`controlStep`). 콜백은 값 저장만 하고 모든 결정은 루프에서 |
 | `state_estimator.cpp` | 주인 글로벌 위치 합성: `bearing = 로봇yaw + 상단yaw각 − azimuth`. 미탐지 시 직전 위치 유지 |
+| `idle_controller.cpp` | 모드0. 상단yaw 정지·리프트 손동작·`/teleop_cmd` 수동주행 |
 | `follow_controller.cpp` | 모드1. 진입 순간 주인-로봇 선분(거리 D, 글로벌각 φ)을 캡처하고, 목표점 `주인위치 − D·(cosφ,sinφ)`를 추종 |
 | `rotate_controller.cpp` | 모드2. 위치 고정, 몸체 yaw만 주인을 추종 |
 | `controller_base.cpp` | 모드 공통: 상단yaw 주인 락온, 리프트, 헤딩 PD, 가속 제한. 새 모드는 이걸 상속 |
