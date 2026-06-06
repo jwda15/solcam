@@ -59,6 +59,13 @@ cd ros2_gesture_node
 python tools/ui_preview.py
 ```
 L=따봉(메뉴 열기) · 1~4=선택(꾹) · P=손바닥(뒤로/닫기) · R=REC · B=배터리 · ESC.
+
+pygame 설치가 안 되면(예: Python 3.14처럼 최신이라 pygame wheel이 아직 없으면)
+설치가 전혀 필요 없는 tkinter 버전을 쓴다 — 키/동작 동일:
+
+```bash
+python tools/ui_preview_tk.py
+```
 실제 상태기계(menu.py)+렌더(hud.py)를 그대로 써서 LCD에 뜨는 화면과 동일하다
 (배경 영상만 없어 CAMERA 표시).
 

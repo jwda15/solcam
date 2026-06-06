@@ -62,7 +62,7 @@ def open_menu(sm):
 def test_navigate_and_mode_action():
     sm = make_sm()
     t = open_menu(sm)
-    evs, t = feed(sm, "one", t, 1.6)             # 주행 모드 카테고리
+    evs, t = feed(sm, "one", t, 1.6)             # Mode 카테고리
     assert "navigate" in kinds(evs)
     feed(sm, None, t, 0.1); t += 0.2             # 릴리즈
     evs, t = feed(sm, "two", t, 1.6)             # 회전 모드 선택
@@ -72,15 +72,31 @@ def test_navigate_and_mode_action():
 
 
 def test_stay_item_repeats_while_held():
+    """모터 조작(stay): 최초 1.5초 발동 후 손을 뗄 때까지 연속(jog)으로
+    같은 명령을 계속 낸다."""
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "two", t, 1.6)               # 거리·구도
+    _, t = feed(sm, "two", t, 1.6)               # Wheel(차체 이동) 진입
     feed(sm, None, t, 0.1); t += 0.2
-    evs, t = feed(sm, "one", t, 3.2)             # '멀리' 3.2초 유지
+    evs, t = feed(sm, "one", t, 3.2)             # 'Farther' 3.2초 유지
     acts = [e for e in evs if e.kind == "action"]
-    assert len(acts) == 2                        # 1.5초마다 반복 → 2회
+    assert len(acts) >= 5                        # 1.5초 후 연속 반복 → 다수
     assert all(a.action.payload["param"] == "SEG_DISTANCE" for a in acts)
+    assert sm.snapshot()["hold_progress"] == 1.0  # 연속 중 게이지 꽉 참
     assert sm.state == "MENU"                    # stay=True → 메뉴 유지
+
+
+def test_stay_repeat_stops_on_release():
+    """손을 떼면 연속이 멈추고, 다시 들면 1.5초 재무장이 필요하다."""
+    sm = make_sm()
+    t = open_menu(sm)
+    _, t = feed(sm, "two", t, 1.6)               # Wheel
+    feed(sm, None, t, 0.1); t += 0.2
+    _, t = feed(sm, "one", t, 1.8)               # 무장 + 연속 시작
+    evs, t = feed(sm, None, t, 0.6)              # 손 뗌 → 연속 정지
+    assert sm.snapshot()["hold_progress"] == 0.0
+    evs, t = feed(sm, "one", t, 0.5)             # 0.5초만 → 재무장 안 됨
+    assert not [e for e in evs if e.kind == "action"]
 
 
 def test_palm_back_then_close():
@@ -112,7 +128,7 @@ def test_no_double_select_without_release():
     evs, t = feed(sm, "one", t, 4.0)             # 4초 내내 'one' 유지
     acts = [e for e in evs if e.kind == "action"]
     assert not acts                              # 팔로우(하위 1번) 자동선택 금지
-    assert sm.path[-1].label == "Drive"
+    assert sm.path[-1].label == "Mode"
 
 
 def test_invalid_gesture_in_menu_ignored():
@@ -128,7 +144,7 @@ def test_invalid_gesture_in_menu_ignored():
 def test_phone_and_system_leaves():
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "four", t, 1.6)              # 촬영·시스템
+    _, t = feed(sm, "four", t, 1.6)              # Other (촬영·시스템)
     feed(sm, None, t, 0.1); t += 0.2
     _, t = feed(sm, "one", t, 1.6)               # 폰 카메라
     feed(sm, None, t, 0.1); t += 0.2

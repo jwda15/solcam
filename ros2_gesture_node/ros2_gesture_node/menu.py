@@ -11,8 +11,9 @@
   - 같은 제스처가 hold 시간 동안 유지되어야 발동. 짧은 인식 끊김은
     dropout_tol(0.4s)까지 허용 (프레임 드랍/깜빡임 흡수).
   - 발동 후:
-      stay=True 항목(연속 조절: 거리/리프트 등)은 손을 유지하면
-        hold 시간마다 자동 반복 발동.
+      stay=True 항목(모터 연속 조작: 거리/리프트/줌 등)은 최초 select_hold
+        발동 뒤 손을 뗄 때까지 repeat_interval(0.12s) 주기로 같은 명령을
+        "연속(jog)"으로 계속 낸다 → 모터가 점진적으로 계속 움직인다.
       그 외(카테고리 진입, 모드 변경 등)는 손을 뗄 때까지 같은
         제스처를 무시 → "길게 들고 있다가 두 단계 연속 선택" 사고 방지.
 
@@ -32,7 +33,7 @@ class Action:
     """메뉴 리프가 실행하는 동작. kind별 payload를 노드가 토픽으로 변환한다.
     kind: 'mode'(주행모드) | 'adjust'(AdjustCmd) | 'phone'(폰 카메라, 자리)
           | 'system'(전원 등, 자리) | 'ui'(LCD 표시 토글)
-    stay: True면 실행 후 같은 메뉴에 머무름(연속 조절용)."""
+    stay: True면 실행 후 같은 메뉴에 머무르며 손을 뗄 때까지 연속 발동."""
     kind: str
     name: str
     payload: dict = field(default_factory=dict)
@@ -60,16 +61,18 @@ class Event:
 
 def build_menu(p: dict) -> MenuNode:
     """메뉴 트리 정의. p = 조절 폭 파라미터 (yaml에서 옴).
-    ★새 항목/카테고리 추가는 여기에 한 줄 — 코드 다른 곳 수정 불필요."""
+    ★새 항목/카테고리 추가는 여기에 한 줄 — 코드 다른 곳 수정 불필요.
+
+    1단: Mode(주행모드) / Wheel(차체 이동) / Lift(리프트) / Other(카메라·시스템)."""
     deg = 3.141592653589793 / 180.0
     return MenuNode("Main", children={
-        "one": MenuNode("Drive", children={
-            "one":   MenuNode("Follow",  action=Action("mode", "Follow",  {"mode": 1})),
-            "two":   MenuNode("Rotate",    action=Action("mode", "Rotate",    {"mode": 2})),
-            "three": MenuNode("Idle",    action=Action("mode", "Idle",  {"mode": 0})),
+        "one": MenuNode("Mode", children={
+            "one":   MenuNode("Follow", action=Action("mode", "Follow", {"mode": 1})),
+            "two":   MenuNode("Rotate", action=Action("mode", "Rotate", {"mode": 2})),
+            "three": MenuNode("Idle",   action=Action("mode", "Idle",   {"mode": 0})),
         }),
-        "two": MenuNode("Frame", children={
-            "one":   MenuNode("Farther",    action=Action("adjust", "Dist +%.1fm" % p["dist_step"],
+        "two": MenuNode("Wheel", children={      # 차체(휠) 이동: 거리·좌우 회전(pan)
+            "one":   MenuNode("Farther", action=Action("adjust", "Dist +%.1fm" % p["dist_step"],
                                                        {"param": "SEG_DISTANCE", "value": +p["dist_step"], "delta": True}, stay=True)),
             "two":   MenuNode("Closer",  action=Action("adjust", "Dist -%.1fm" % p["dist_step"],
                                                        {"param": "SEG_DISTANCE", "value": -p["dist_step"], "delta": True}, stay=True)),
@@ -85,11 +88,11 @@ def build_menu(p: dict) -> MenuNode:
             "two": MenuNode("Down", action=Action("adjust", "Lift -%.2fm" % p["lift_step"],
                                                     {"param": "LIFT_HEIGHT", "value": -p["lift_step"], "delta": True}, stay=True)),
         }),
-        "four": MenuNode("Camera", children={
+        "four": MenuNode("Other", children={
             "one": MenuNode("Phone", children={      # 폰 연동은 자리만 (/phone_cmd)
-                "one":   MenuNode("Zoom +",   action=Action("phone", "Zoom +",   {"cmd": "zoom_in"},  stay=True)),
-                "two":   MenuNode("Zoom -",   action=Action("phone", "Zoom -",   {"cmd": "zoom_out"}, stay=True)),
-                "three": MenuNode("Focus", action=Action("phone", "Focus", {"cmd": "focus"})),
+                "one":   MenuNode("Zoom +", action=Action("phone", "Zoom +", {"cmd": "zoom_in"},  stay=True)),
+                "two":   MenuNode("Zoom -", action=Action("phone", "Zoom -", {"cmd": "zoom_out"}, stay=True)),
+                "three": MenuNode("Focus",  action=Action("phone", "Focus",  {"cmd": "focus"})),
             }),
             "two":   MenuNode("OAK view",  action=Action("ui", "OAK view", {"toggle": "oak_view"}, stay=True)),
             "three": MenuNode("Power off", action=Action("system", "Power off", {"cmd": "shutdown"})),  # 자리만 (/system_cmd)
@@ -101,12 +104,15 @@ class MenuStateMachine:
     """제스처 라벨 스트림 → 메뉴 사건. 시간은 호출자가 주입(테스트 용이)."""
 
     def __init__(self, root: MenuNode, trigger_hold=1.5, select_hold=1.5,
-                 menu_timeout=10.0, dropout_tol=0.4):
+                 menu_timeout=10.0, dropout_tol=0.4, repeat_interval=0.12):
         self.root = root
         self.trigger_hold = trigger_hold
         self.select_hold = select_hold
         self.menu_timeout = menu_timeout
         self.dropout_tol = dropout_tol
+        # stay 항목(모터 조작) 연속 모드: 최초 select_hold 발동 후, 손을 뗄
+        #  때까지 이 짧은 주기로 같은 명령을 계속 낸다(거리/리프트 점진 이동).
+        self.repeat_interval = repeat_interval
         self.state = "IDLE"
         self.path: List[MenuNode] = []        # MENU일 때 [root, ...]
         self.last_action_name = ""
@@ -115,6 +121,7 @@ class MenuStateMachine:
         self._last_seen = 0.0
         self._await_release: Optional[str] = None  # 발동 후 손 뗄 때까지 무시
         self._last_activity = 0.0
+        self._repeating = False               # stay 항목 연속 발동 중?
 
     # ------------------------------------------------------------------
     def update(self, gesture: Optional[str], t: float) -> List[Event]:
@@ -141,7 +148,11 @@ class MenuStateMachine:
             cur = self.path[-1]
             valid = gesture if (gesture == BACK or
                                 (gesture in SELECT_KEYS and cur.children and gesture in cur.children)) else None
-            self._update_hold(valid, t, self.select_hold,
+            # 연속(jog) 중이면 짧은 주기로, 아니면 select_hold(1.5s)로 발동 판정
+            need = (self.repeat_interval
+                    if (self._repeating and valid is not None and valid == self._cand)
+                    else self.select_hold)
+            self._update_hold(valid, t, need,
                               lambda: self._fire(valid, t, ev))
         return ev
 
@@ -156,7 +167,9 @@ class MenuStateMachine:
                     items.append({"gesture": g, "label": cur.children[g].label})
         progress = 0.0
         need = self.trigger_hold if self.state == "IDLE" else self.select_hold
-        if self._cand is not None and need > 0:
+        if self._repeating:
+            progress = 1.0   # 연속(jog) 중엔 게이지를 꽉 채워 활성 표시
+        elif self._cand is not None and need > 0:
             progress = min(1.0, (self._last_seen - self._hold_start) / need)
         return {
             "state": self.state,
@@ -173,10 +186,12 @@ class MenuStateMachine:
         if gesture is None:
             if self._cand is not None and t - self._last_seen > self.dropout_tol:
                 self._cand = None
+                self._repeating = False   # 손을 떼면 연속 모드 종료
             return
         if gesture != self._cand:
             self._cand = gesture
             self._hold_start = t
+            self._repeating = False       # 다른 제스처면 연속 모드 초기화
         self._last_seen = t
         if t - self._hold_start >= need:
             on_fire()
@@ -188,6 +203,7 @@ class MenuStateMachine:
         self.state = "MENU"
         self.path = [self.root]
         self._cand = None
+        self._repeating = False
         self._await_release = TRIGGER
         self._last_activity = t
         ev.append(Event("open"))
@@ -196,10 +212,12 @@ class MenuStateMachine:
         self.state = "IDLE"
         self.path = []
         self._cand = None
+        self._repeating = False
         ev.append(Event("close", reason=reason))
 
     def _fire(self, gesture, t, ev):
         cur = self.path[-1]
+        self._repeating = False           # 기본은 단발. stay 리프만 아래서 켠다
         if gesture == BACK:
             if len(self.path) > 1:
                 self.path.pop()
@@ -215,7 +233,8 @@ class MenuStateMachine:
             self.last_action_name = child.action.name
             ev.append(Event("action", action=child.action))
             if child.action.stay:
-                self._hold_start = t          # 유지 중이면 hold마다 반복 발동
+                self._hold_start = t          # 다음 발동 기준점 갱신
+                self._repeating = True        # 이후 repeat_interval 주기로 연속
             else:
                 self._close("done", ev)
                 self._await_release = gesture
@@ -224,3 +243,5 @@ class MenuStateMachine:
             ev.append(Event("navigate"))
             self._await_release = gesture     # 떼기 전 연속 선택 방지
             self._cand = None
+
+

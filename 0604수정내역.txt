@@ -554,3 +554,15 @@
  - tools/ui_preview_tk.py 추가: 설치 불필요 tkinter 프리뷰. Python 3.14 등
    pygame wheel 미배포 환경 대비(소스 컴파일 실패 회피). menu.py 상태기계는
    그대로 공유하고 그리기만 tkinter로 재구현(테마/레이아웃 hud.py와 일치).
+
+ - UI 피드백 반영 (0606):
+   1) 상단바 우측 배터리/녹화시간 겹침 해소 — 오른쪽→왼쪽 순차 배치.
+   2) 따봉(트리거) 1.5초도 작은 파란 게이지로 진행 표시(_draw_trigger).
+   3) 1단 메뉴 라벨 변경: Drive/Frame/Camera → Mode/Wheel/Other (Lift 유지).
+   4) 모터 조작(stay 항목): 최초 1.5초 발동 후 손 뗄 때까지 연속(jog) 명령.
+      menu.py에 repeat_interval(0.12s)·_repeating 추가. 연속 중 게이지는
+      꽉 찬 상태(보라 테두리 전체)로 표시. test_menu에 연속/정지 케이스 추가.
+   5) hold 연출을 "카드 전체 채움"→"테두리가 좌→우로 보라색 채움"으로 변경
+      (_border_fill_lr). 확정 시 0.1초 흰 플래시는 메뉴에서만(연속은 제외).
+   - hud.py(실제 LCD)·ui_preview_tk.py(설치 불필요 프리뷰) 동일 적용.
+     hud.py 오프스크린 렌더로 3종 상태(메뉴/연속/따봉게이지) 시각 검증.
