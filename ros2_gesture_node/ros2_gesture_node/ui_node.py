@@ -19,6 +19,7 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, Int32, String
 from sensor_msgs.msg import Image, BatteryState
 
@@ -38,16 +39,19 @@ class UiNode(Node):
         self.battery = None
         self.recording = False
         self.rec_start = 0.0
-        self.frame = None
+        self.phone_frame = None    # /phone/image (촬영 카메라)
+        self.oak_frame = None      # /oak/rgb/image_raw (손동작 인식 카메라)
 
         self.create_subscription(String, "/gesture_ui", self._ui_cb, 10)
         self.create_subscription(Int32, "/control_mode", self._mode_cb, 10)
         self.create_subscription(BatteryState, "/phone/battery", self._batt_cb, 10)
         self.create_subscription(Bool, "/phone/recording", self._rec_cb, 10)
         self.create_subscription(
-            Image, str(self.get_parameter("video_topic").value), self._img_cb, 1)
+            Image, str(self.get_parameter("video_topic").value), self._phone_img_cb,
+            qos_profile_sensor_data)
         self.create_subscription(
-            Image, str(self.get_parameter("video_fallback").value), self._img_cb, 1)
+            Image, str(self.get_parameter("video_fallback").value), self._oak_img_cb,
+            qos_profile_sensor_data)
 
         try:
             import pygame
@@ -60,7 +64,8 @@ class UiNode(Node):
             self.screen = pygame.display.set_mode(size, flags)
             pygame.mouse.set_visible(False)
             self.hud = Hud(pygame)
-            self.create_timer(1.0 / 30.0, self._render)
+            self._closing = False
+            self.render_timer = self.create_timer(1.0 / 30.0, self._render)
             self.get_logger().info("LCD UI 시작 (pygame)")
         except Exception as e:
             self.pygame = None
@@ -86,25 +91,50 @@ class UiNode(Node):
             self.rec_start = time.time()
         self.recording = bool(msg.data)
 
-    def _img_cb(self, msg):
+    @staticmethod
+    def _decode(msg):
         if msg.encoding not in ("rgb8", "bgr8"):
-            return
+            return None
         buf = np.frombuffer(msg.data, dtype=np.uint8)
         try:
             img = buf.reshape(msg.height, msg.step // 3, 3)[:, :msg.width, :]
         except ValueError:
-            return
-        self.frame = img[:, :, ::-1] if msg.encoding == "bgr8" else img
+            return None
+        return img[:, :, ::-1] if msg.encoding == "bgr8" else img
+
+    def _phone_img_cb(self, msg):
+        f = self._decode(msg)
+        if f is not None:
+            self.phone_frame = f
+
+    def _oak_img_cb(self, msg):
+        f = self._decode(msg)
+        if f is not None:
+            self.oak_frame = f
 
     # ----- 렌더 -----
     def _render(self):
         pg = self.pygame
+        if self._closing:
+            return
         for e in pg.event.get():
             if e.type == pg.QUIT or (e.type == pg.KEYDOWN and e.key == pg.K_ESCAPE):
+                self._closing = True
+                try:
+                    self.render_timer.cancel()
+                except Exception:
+                    pass
+                pg.quit()               # 창 즉시 닫기(WM '응답 없음' 방지)
                 rclpy.shutdown()
                 return
+        state = self.snap.get("state")
+        oak_view = bool(self.snap.get("ui_flags", {}).get("oak_view", False))
+        split = (state == "MENU") or oak_view
+        bg = self.phone_frame if self.phone_frame is not None else self.oak_frame
         self.hud.draw(self.screen, self.snap, mode=self.mode, battery=self.battery,
-                      recording=self.recording, rec_start=self.rec_start, frame=self.frame)
+                      recording=self.recording, rec_start=self.rec_start,
+                      frame=(self.phone_frame if split else bg),
+                      oak_frame=self.oak_frame, split=split)
         pg.display.flip()
 
     def _render_console(self):
@@ -122,8 +152,15 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    if rclpy.ok():
-        rclpy.shutdown()
+    finally:
+        try:
+            if node.pygame is not None:
+                node.pygame.quit()   # 창/리소스 정리(이중 호출 안전)
+        except Exception:
+            pass
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

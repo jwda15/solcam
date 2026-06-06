@@ -19,6 +19,7 @@ import json
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, Int32, String
 from sensor_msgs.msg import Image
 
@@ -80,7 +81,7 @@ class GestureNode(Node):
             self.recognizer = HagridYoloRecognizer(
                 str(gp("model_path")), float(gp("conf_threshold")))
             self.create_subscription(Image, str(gp("image_topic")),
-                                     self._image_cb, 1)   # 최신 프레임만 (depth=1)
+                                     self._image_cb, qos_profile_sensor_data)  # BEST_EFFORT(OAK/센서)
             self.get_logger().info(
                 f"recognizer=hagrid model={gp('model_path')} topic={gp('image_topic')}")
 

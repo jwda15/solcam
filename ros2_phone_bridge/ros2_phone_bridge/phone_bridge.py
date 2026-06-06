@@ -27,6 +27,7 @@
 import os
 import re
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -55,6 +56,11 @@ class PhoneBridge(Node):
         self.declare_parameter("phone_push_dir", "/sdcard/DCIM/solcam")
         self.declare_parameter("manage_scrcpy", False)
         self.declare_parameter("scrcpy_extra", "")             # 추가 인자
+        self.declare_parameter("scrcpy_bin", "scrcpy")         # scrcpy 실행파일 경로
+        self.declare_parameter("adb_bin", "adb")               # adb 실행파일 경로
+        self.declare_parameter("camera_size", "1280x720")      # scrcpy 카메라 해상도
+        self.declare_parameter("camera_facing", "back")        # front/back
+        self.declare_parameter("scrcpy_watchdog", True)        # 죽으면 자동 재기동
 
         gp = self.get_parameter
         self.mock = bool(gp("mock").value)
@@ -66,6 +72,11 @@ class PhoneBridge(Node):
         self.phone_push_dir = str(gp("phone_push_dir").value)
         self.manage_scrcpy = bool(gp("manage_scrcpy").value)
         self.scrcpy_extra = str(gp("scrcpy_extra").value)
+        self.scrcpy_bin = str(gp("scrcpy_bin").value)
+        self.adb_bin = str(gp("adb_bin").value)
+        self.camera_size = str(gp("camera_size").value)
+        self.camera_facing = str(gp("camera_facing").value)
+        self.scrcpy_watchdog = bool(gp("scrcpy_watchdog").value)
 
         # ---- 상태 ----
         self.cap = None                 # cv2.VideoCapture
@@ -75,6 +86,13 @@ class PhoneBridge(Node):
         self.recording = False
         self._mock_phase = 0
         self._battery = 100
+        # 영상 재연결(케이블 흔들림/scrcpy 재시작 대비)
+        self._read_fail = 0
+        self._reopen_after = 5        # 연속 read 실패 N회 후 재연결
+        self._last_reopen = 0.0
+        self._reopen_interval = 1.0   # 재연결 시도 최소 간격 s
+        self._last_scrcpy_restart = 0.0
+        self._scrcpy_restart_interval = 3.0  # scrcpy 재기동 최소 간격 s
 
         # ---- pub/sub ----
         self.pub_img = self.create_publisher(Image, "/phone/image", 1)
@@ -83,14 +101,23 @@ class PhoneBridge(Node):
         self.create_subscription(String, "/phone_cmd", self._cmd_cb, 10)
 
         # ---- 영상 소스 준비 ----
+        self._cap_stop = False
+        self._cap_thread = None
         if not self.mock:
             if self.manage_scrcpy:
                 self._start_scrcpy()
             self._open_capture()
+            # 캡처는 별도 스레드에서 — cap.read() 블로킹이 ROS executor(워치독/배터리)를
+            # 멈추지 않게 한다(영상 끊김 시 굳는 현상 방지).
+            self._cap_thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self._cap_thread.start()
 
         # ---- 타이머 ----
-        self.create_timer(1.0 / max(1.0, self.publish_rate), self._tick_image)
+        if self.mock:
+            self.create_timer(1.0 / max(1.0, self.publish_rate), self._tick_image_mock)
         self.create_timer(self.battery_period, self._tick_battery)
+        if not self.mock and self.manage_scrcpy and self.scrcpy_watchdog:
+            self.create_timer(2.0, self._tick_scrcpy_watchdog)  # scrcpy 생존 감시
         self._tick_battery()  # 시작 즉시 1회
         self._publish_recording()  # 초기 false 알림
 
@@ -99,44 +126,176 @@ class PhoneBridge(Node):
 
     # ================= 영상 =================
     def _start_scrcpy(self):
-        """폰 후면 카메라를 v4l2 sink 로 스트림하는 scrcpy 서브프로세스."""
-        cmd = ["scrcpy", "--video-source=camera", "--camera-facing=back",
-               f"--v4l2-sink={self.video_device}", "--no-audio",
-               "--no-window", "--no-playback"]
+        """폰 후면 카메라를 v4l2 sink 로 스트림하는 scrcpy 자식 프로세스.
+
+        - 띄우기 전 잔여 scrcpy/폰서버를 먼저 정리(고아·장치 꼬임 방지).
+        - start_new_session=True 로 별도 프로세스 그룹 → 종료 시 그룹째 정리.
+        - 고정 sleep 없이, 캡처는 _open_capture 의 포맷 준비 게이트가 처리.
+        """
+        self._kill_scrcpy()  # 잔여 정리(고아 scrcpy/폰서버)
+        cmd = [self.scrcpy_bin, "--video-source=camera",
+               f"--camera-facing={self.camera_facing}",
+               f"--camera-size={self.camera_size}",
+               f"--v4l2-sink={self.video_device}",
+               "--no-audio", "--no-window", "--no-playback"]
         if self.adb_serial:
             cmd += ["-s", self.adb_serial]
         if self.scrcpy_extra:
             cmd += shlex.split(self.scrcpy_extra)
+        env = dict(os.environ)
+        env["ADB"] = self.adb_bin
+        sc_dir = os.path.dirname(self.scrcpy_bin)
+        if sc_dir:
+            env["PATH"] = sc_dir + os.pathsep + env.get("PATH", "")
+        env.setdefault("XDG_RUNTIME_DIR", "/run/user/1000")
         try:
-            self.scrcpy_proc = subprocess.Popen(cmd)
-            time.sleep(2.0)  # 장치 생성 대기
-            self.get_logger().info("scrcpy 카메라 스트림 시작")
+            self.scrcpy_proc = subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True, env=env)
+            self._last_scrcpy_restart = time.time()
+            self.get_logger().info(
+                f"scrcpy 시작(pid={self.scrcpy_proc.pid}, {self.camera_size})")
         except FileNotFoundError:
-            self.get_logger().error("scrcpy 미설치 — 스크립트로 직접 실행하거나 설치 필요")
+            self.get_logger().error(
+                f"scrcpy 실행 실패 — scrcpy_bin='{self.scrcpy_bin}' 확인")
+            self.scrcpy_proc = None
+
+    def _kill_scrcpy(self):
+        """관리 중인 scrcpy를 그룹 단위로 graceful 종료하고, 잔여 scrcpy/폰서버 정리.
+        강제 kill 로 인한 고아 프로세스·v4l2 장치 꼬임을 막는다."""
+        proc = self.scrcpy_proc
+        if proc is not None and proc.poll() is None:
+            try:
+                pg = os.getpgid(proc.pid)
+                os.killpg(pg, signal.SIGTERM)      # graceful(scrcpy가 폰서버 정리)
+                try:
+                    proc.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    os.killpg(pg, signal.SIGKILL)  # 폴백
+            except (ProcessLookupError, PermissionError):
+                pass
+        self.scrcpy_proc = None
+        # 우리가 소유하지 않은 잔여 로컬 scrcpy(같은 sink) 정리
+        try:
+            subprocess.run(["pkill", "-f", f"v4l2-sink={self.video_device}"],
+                           capture_output=True, timeout=3.0)
+        except Exception:
+            pass
+        # 폰쪽 scrcpy 서버 잔여 정리(HAL 스턱 방지)
+        try:
+            subprocess.run(self._adb("shell", "pkill", "-f",
+                                     "com.genymobile.scrcpy"),
+                           capture_output=True, timeout=4.0)
+        except Exception:
+            pass
+
+    def _device_format_ready(self):
+        """v4l2 장치에 유효 포맷이 잡혔는지(writer가 헤더를 썼는지) 확인.
+        exclusive_caps=1 에선 reader가 writer보다 먼저 열면 포맷이 잠기므로,
+        준비된 뒤에만 캡처를 연다(장치 꼬임 방지)."""
+        try:
+            r = subprocess.run(["v4l2-ctl", "-d", self.video_device,
+                                "--get-fmt-video"],
+                               capture_output=True, text=True, timeout=3.0)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return True  # v4l2-ctl 없으면 게이트 생략(기존 동작 유지)
+        if r.returncode != 0:
+            return False
+        m = re.search(r"Width/Height\s*:\s*(\d+)/(\d+)", r.stdout)
+        return bool(m and int(m.group(1)) > 0 and int(m.group(2)) > 0)
+
+    def _tick_scrcpy_watchdog(self):
+        """scrcpy가 죽었으면(케이블 빠짐 등) 자동 재기동."""
+        if self.scrcpy_proc is None or self.scrcpy_proc.poll() is None:
+            return  # 미관리이거나 살아있음
+        now = time.time()
+        if now - self._last_scrcpy_restart < self._scrcpy_restart_interval:
+            return
+        self.get_logger().warn("scrcpy 종료 감지 → 자동 재기동")
+        self._release_cap()   # 블로킹된 read 깨우고, 포맷 재준비 후 캡처 스레드가 재오픈
+        self._start_scrcpy()
 
     def _open_capture(self):
         try:
             import cv2
             self._cv2 = cv2
-            self.cap = cv2.VideoCapture(self.video_device)
-            if not self.cap.isOpened():
-                self.get_logger().warn(
-                    f"{self.video_device} 열기 실패 — scrcpy/v4l2loopback 확인")
-                self.cap = None
         except ImportError:
             self.get_logger().error("python3-opencv(cv2) 미설치 — 영상 발행 불가")
             self.cap = None
-
-    def _tick_image(self):
-        if self.mock:
-            frame = self._mock_frame()
-        elif self.cap is not None:
-            ok, frame = self.cap.read()
-            if not ok or frame is None:
-                return
-        else:
             return
-        self.pub_img.publish(self._to_image_msg(frame))
+        # 기존 캡처가 있으면 먼저 해제(재연결 시 핸들 누수 방지)
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+        # writer(scrcpy) 포맷 준비 전에는 열지 않음 — exclusive_caps 장치 꼬임 방지
+        if not self.mock and not self._device_format_ready():
+            self.cap = None
+            return
+        cap = cv2.VideoCapture(self.video_device)
+        if not cap.isOpened():
+            self.get_logger().warn(
+                f"{self.video_device} 열기 실패 — scrcpy/v4l2loopback 확인")
+            try:
+                cap.release()
+            except Exception:
+                pass
+            self.cap = None
+            return
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 지연/스테일 프레임 최소화
+        except Exception:
+            pass
+        self.cap = cap
+
+    def _tick_image_mock(self):
+        self.pub_img.publish(self._to_image_msg(self._mock_frame()))
+
+    def _capture_loop(self):
+        """별도 스레드: v4l2 장치에서 프레임을 읽어 /phone/image 로 발행.
+        read() 가 블로킹돼도 ROS executor(워치독/배터리)는 영향을 받지 않는다."""
+        period = 1.0 / max(1.0, self.publish_rate)
+        while rclpy.ok() and not self._cap_stop:
+            if self.cap is None:
+                self._try_reopen()          # 포맷 준비됐을 때만 열림(게이트)
+                if self.cap is None:
+                    time.sleep(self._reopen_interval)
+                    continue
+            try:
+                ok, frame = self.cap.read()
+            except Exception:
+                ok, frame = False, None
+            if not ok or frame is None:
+                self._read_fail += 1
+                if self._read_fail >= self._reopen_after:
+                    self._release_cap()     # 닫고 다음 루프에서 재오픈
+                    self._read_fail = 0
+                time.sleep(0.05)
+                continue
+            self._read_fail = 0
+            self.pub_img.publish(self._to_image_msg(frame))
+            time.sleep(period)
+
+    def _release_cap(self):
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+
+    def _try_reopen(self):
+        """끊긴 v4l2 장치를 다시 연다(포맷 준비 게이트는 _open_capture 안에서)."""
+        now = time.time()
+        if now - self._last_reopen < self._reopen_interval:
+            return
+        self._last_reopen = now
+        self._open_capture()
+        if self.cap is not None:
+            self._read_fail = 0
+            self.get_logger().info(f"{self.video_device} 재연결 성공")
 
     def _mock_frame(self, w=640, h=360):
         """움직이는 그라데이션 합성 프레임(BGR)."""
@@ -165,7 +324,7 @@ class PhoneBridge(Node):
 
     # ================= 배터리 =================
     def _adb(self, *args):
-        cmd = ["adb"]
+        cmd = [self.adb_bin]
         if self.adb_serial:
             cmd += ["-s", self.adb_serial]
         return cmd + list(args)
@@ -270,15 +429,17 @@ class PhoneBridge(Node):
 
     # ================= 종료 =================
     def destroy_node(self):
+        self._cap_stop = True
+        if self._cap_thread is not None:
+            self._cap_thread.join(timeout=2.0)
         if self.rec_proc is not None:
             try:
                 self.rec_proc.communicate(input=b"q", timeout=3.0)
             except Exception:
                 self.rec_proc.terminate()
-        if self.cap is not None:
-            self.cap.release()
-        if self.scrcpy_proc is not None:
-            self.scrcpy_proc.terminate()
+        self._release_cap()
+        if self.manage_scrcpy:
+            self._kill_scrcpy()   # graceful 그룹 종료 + 폰서버 정리(고아 방지)
         super().destroy_node()
 
 

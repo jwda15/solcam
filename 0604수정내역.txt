@@ -612,3 +612,100 @@
      imageio-ffmpeg(순수 py3 wheel)로 자동 해결. PPM→base64→PhotoImage.
    * --list-cameras 로 dshow 장치명 확인. --cam-size/--cam-fps/--input-format.
    * 파이프 read 부분수신 버그 수정(frame_bytes 누적). ffmpeg testsrc로 검증.
+
+
+============================================================================
+ 0607 — UI 이분할(PHONE|OAK) + QoS 수정 + X버튼 종료 + phone_bridge 안정화
+============================================================================
+
+[환경] Ubuntu 22.04 + ROS2 Humble (집 PC). 워크스페이스 ~/solcam_ws (영문경로
+ 심링크). --symlink-install develop 설치라 .py 수정 후 colcon 재빌드 없이도
+ 노드 재시작으로 반영되나, 실제 import 는 build/<pkg>/ 복사본 → 안전하게
+ colcon build 후 재시작 권장. (build본 == 소스 동일 확인함.)
+
+[1. UI 배경 이분할 — hud.py / ui_node.py]
+ 따봉으로 메뉴 열 때(또는 Other→OAK view) 배경을 왼쪽 PHONE | 오른쪽 OAK 로
+ 분할 → 손이 인식 카메라(OAK)에 잡히는지 사용자가 바로 확인 가능.
+ - hud.draw(): oak_frame, split 인자 추가.
+ - _draw_video(): split 이면 화면을 반으로 나눠 _blit_cover 로 PHONE/OAK 채우고
+   중앙 분리선 + "PHONE"/"OAK" 태그(_tag). split=False 면 단일 cover.
+ - _blit_cover(): 지정영역 cover-스케일 + clip(영역밖 넘침 방지),
+   frame=None 이면 어두운 플레이스홀더.
+ - ui_node: phone_frame/oak_frame 분리구독(_phone_img_cb/_oak_img_cb + 공용 _decode).
+   split = (state=="MENU") or ui_flags.oak_view.
+   ※ 메뉴 중엔 항상 분할(설계). oak_view 로는 메뉴 중 분할 해제 안 됨(정상).
+   ※ 단일화면 배경 = phone_frame 있으면 폰, 없으면 oak 폴백.
+   ※ gesture_node 는 이미 ui_flags{oak_view} 발행 중(변경 없음).
+
+[2. QoS 수정 — gesture_node.py / ui_node.py]
+ 증상: OAK(oak_detector)가 영상을 BEST_EFFORT 발행하는데 구독측 기본(RELIABLE)
+ 이라 "incompatible QoS" → 프레임 미수신(따봉 인식 안 됨).
+ - gesture_node: /oak 이미지 구독 → qos_profile_sensor_data(BEST_EFFORT).
+ - ui_node: /phone/image, /oak 이미지 구독 둘 다 qos_profile_sensor_data.
+   (phone_bridge /phone/image 는 RELIABLE 발행 → BEST_EFFORT 구독과 호환)
+
+[3. UI X버튼 종료 수정 — ui_node.py]
+ 증상: 창 X 누르면 안 닫히고 "응답없음 → 강제종료" 물음.
+ 원인: QUIT 시 rclpy.shutdown()만 부르고 pygame 창을 안 닫아 WM 가 응답없음 판단.
+ - QUIT/ESC: _closing 플래그 + render_timer.cancel() + pg.quit()(창 즉시닫기)
+   + rclpy.shutdown(). _render 진입부 _closing 이면 즉시 return.
+ - main(): finally 에서 pygame.quit()(이중호출 안전) + destroy_node().
+
+[4. phone_bridge 안정화 재작성 — phone_bridge.py]
+ 목표: 케이블 잠깐 끊겨도 영상 유지/자동복구 + scrcpy 손관리 제거 + 좀비 방지.
+ (4-1) 캡처를 별도 스레드(_capture_loop)로 분리:
+   cap.read() 가 블로킹돼도 ROS executor(워치독/배터리/명령)가 안 멈춤.
+   ★"영상 끊기면 노드 전체가 굳던" 근본 원인 해결.
+   read 실패 누적 시 캡처 release 후 다음 루프에서 재오픈(_try_reopen).
+ (4-2) scrcpy 를 노드가 자식으로 직접 소유(manage_scrcpy:=true):
+   - _start_scrcpy: 잔여 scrcpy/폰서버 먼저 정리 후 start_new_session 으로 기동.
+     env 에 ADB/PATH(번들 scrcpy 경로)/XDG_RUNTIME_DIR 주입.
+   - _kill_scrcpy: 프로세스그룹 SIGTERM→(3s)→SIGKILL graceful 종료 +
+     pkill "v4l2-sink" + adb 폰서버 정리 → 고아/좀비 방지.
+   - destroy_node: 캡처 스레드 정지 후 _kill_scrcpy.
+ (4-3) 포맷 준비 게이트(_device_format_ready, v4l2-ctl --get-fmt-video):
+   exclusive_caps=1 에선 writer(scrcpy)가 포맷 쓰기 전에 reader(cv2)가 열면
+   장치가 잠김 → 포맷 잡힌 뒤에만 캡처 오픈.
+ (4-4) 워치독(_tick_scrcpy_watchdog, 2s): scrcpy 죽으면 캡처 닫고 자동 재기동.
+ (4-5) 신규 파라미터: scrcpy_bin, adb_bin, camera_size, camera_facing,
+   scrcpy_watchdog (+ 기존 manage_scrcpy).
+ 실행 예(집 PC, 번들 scrcpy v4.0; SC=/home/jw/scrcpy_bin/scrcpy-linux-x86_64-v4.0):
+   ros2 run ros2_phone_bridge phone_bridge --ros-args \
+     -p video_device:=/dev/video2 -p manage_scrcpy:=true \
+     -p scrcpy_bin:=$SC/scrcpy -p adb_bin:=$SC/adb -p camera_size:=1280x720
+
+[검증 완료]
+ - 이분할/단일 렌더, QoS 후 따봉 인식, X버튼 종료 OK.
+ - managed phone_bridge: scrcpy 자동기동 → 포맷게이트 대기 → /phone/image
+   1280x720 약 6Hz 발행 확인. 워치독으로 scrcpy 죽이면 재기동도 확인.
+ - 폰: 삼성 SM-A546S(Galaxy A54 5G, Android14), adb serial R5CX40BYG8W.
+
+[미해결 — 새 대화방에서 이어서 ★]
+ (A) DDS 디스커버리 degrade:
+   노드를 kill -9 로 수십 번 죽이며 /dev/shm/fastrtps_* 잔여물이 쌓이면,
+   새로 띄운 ui_node 가 그래프 합류를 못 해 검은 화면(토픽 미수신)이 됨.
+   기존에 떠 있던(정상시 합류한) 노드는 계속 동작 → "내가 띄우면 안 되고
+   봇이 띄우면 됨"처럼 보였던 원인. ★코드 문제 아님(빌드본==소스 확인).
+   해결(검증됨): 전체 노드 kill(PID) → ros2 daemon stop →
+     rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* → 백엔드 순서대로 재기동.
+   정상 운영(한 번 띄우고 안 죽임)에선 거의 안 생김.
+ (B) v4l2loopback 장치 꼬임:
+   scrcpy 를 kill -9(또는 케이블 급단절)로 죽이면 /dev/video2 가
+   VIDIOC_G_FMT: Invalid argument 로 잠겨 새 scrcpy 도 헤더를 못 씀.
+   유저스페이스로 못 풀고 모듈 리로드 필요:
+     sudo modprobe -r v4l2loopback
+     sudo modprobe v4l2loopback video_nr=2 card_label=solcam_phone exclusive_caps=1
+   managed phone_bridge 의 graceful 종료(SIGTERM)에선 안 꼬임 — 꼬임은 -9/급단절 탓.
+   ★완전 자동복구안(미구현): v4l2loopback 리로드만 NOPASSWD sudoers 허용 후,
+     phone_bridge 가 "scrcpy 살아있는데 포맷 N초 미준비" 감지 시 리로드 트리거.
+
+[운영 주의(중요)]
+ - scrcpy 는 절대 kill -9 금지(장치 꼬임). phone_bridge 정상종료(SIGINT/SIGTERM)는
+   destroy_node 가 scrcpy graceful 처리.
+ - 이 환경에서 pkill -f 가 종종 매칭 실패 → PID 로 kill 권장.
+ - GUI 노드(ui_node)는 반드시:
+     export DISPLAY=:0 XAUTHORITY=/run/user/1000/gdm/Xauthority
+   띄운 뒤 디스커버리+첫프레임에 ~10초(검은화면이어도 바로 Ctrl+C 금지).
+ - depthai 캐시 때문에 OAK 런치는 repo 루트에서:
+     cd "<repo>" && ros2 launch ros2_yolo_oak oak_tracking.launch.py viz:=false
+ - 권장 기동 순서: OAK → gesture_node → phone_bridge(managed) → ui_node.

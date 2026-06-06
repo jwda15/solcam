@@ -48,10 +48,11 @@ class Hud:
         self._flash_rect = None
 
     def draw(self, scr, snapshot, *, mode=0, battery=None,
-             recording=False, rec_start=0.0, frame=None):
+             recording=False, rec_start=0.0, frame=None,
+             oak_frame=None, split=False):
         w, h = scr.get_size()
         self._detect_confirm(snapshot)
-        self._draw_video(scr, w, h, frame)
+        self._draw_video(scr, w, h, frame, oak_frame, split)
         self._draw_topbar(scr, w, mode, battery, recording, rec_start)
         if snapshot.get("state") == "MENU":
             self._draw_dock(scr, w, h, snapshot, recording)
@@ -82,20 +83,47 @@ class Hud:
             return
         self._panel(scr, self._flash_rect, (255, 255, 255), 245)
 
-    # ----- 배경 영상 -----
-    def _draw_video(self, scr, w, h, frame):
+    # ----- 배경 영상 (단일 또는 폰|OAK 이분할) -----
+    def _draw_video(self, scr, w, h, frame, oak_frame=None, split=False):
+        if not split:
+            self._blit_cover(scr, 0, 0, w, h, frame, "CAMERA")
+            return
+        half = w // 2
+        self._blit_cover(scr, 0, 0, half, h, frame, "PHONE")
+        self._blit_cover(scr, half, 0, w - half, h, oak_frame, "OAK")
+        self.pg.draw.line(scr, (10, 12, 16), (half, 0), (half, h), 2)
+        self._tag(scr, 10, 44, "PHONE")
+        self._tag(scr, half + 10, 44, "OAK")
+
+    def _blit_cover(self, scr, x, y, bw, bh, frame, fallback):
+        """frame(RGB ndarray)을 (x,y,bw,bh) 영역에 cover-스케일로 채운다.
+        영역 밖으로 넘치지 않게 clip. frame=None이면 어두운 플레이스홀더."""
         pg = self.pg
+        clip = pg.Rect(x, y, bw, bh)
+        prev = scr.get_clip()
+        scr.set_clip(clip)
         if frame is None:
-            scr.fill((15, 17, 21))
-            self._center(scr, "CAMERA", self.f_small, (58, 63, 72), h // 2)
+            scr.fill((15, 17, 21), clip)
+            s = self.f_small.render(fallback, True, (58, 63, 72))
+            scr.blit(s, (x + (bw - s.get_width()) // 2, y + bh // 2 - 8))
+            scr.set_clip(prev)
             return
         import numpy as np
         fh, fw, _ = frame.shape
         surf = pg.image.frombuffer(np.ascontiguousarray(frame).tobytes(), (fw, fh), "RGB")
-        scale = max(w / fw, h / fh)
+        scale = max(bw / fw, bh / fh)
         surf = pg.transform.smoothscale(surf, (int(fw * scale), int(fh * scale)))
         sw, sh = surf.get_size()
-        scr.blit(surf, ((w - sw) // 2, (h - sh) // 2))
+        scr.blit(surf, (x + (bw - sw) // 2, y + (bh - sh) // 2))
+        scr.set_clip(prev)
+
+    def _tag(self, scr, x, y, text):
+        pg = self.pg
+        s = self.f_small.render(text, True, WHITE)
+        bg = pg.Surface((s.get_width() + 12, s.get_height() + 4), pg.SRCALPHA)
+        pg.draw.rect(bg, (*INK, 150), bg.get_rect(), border_radius=6)
+        scr.blit(bg, (x - 6, y - 2))
+        scr.blit(s, (x, y))
 
     # ----- 상단바 (우→좌 배치, 겹침 방지) -----
     def _draw_topbar(self, scr, w, mode, battery, recording, rec_start):
