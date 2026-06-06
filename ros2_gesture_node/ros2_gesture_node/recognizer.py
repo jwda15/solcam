@@ -20,6 +20,8 @@ ALIASES = {
     "three": "three", "three2": "three",
     "four": "four",
     "palm": "palm", "stop": "palm", "stop_inverted": "palm",
+    "dislike": "dislike", "dislike_inverted": "dislike",   # 거꾸로 따봉 = 뒤로
+
 }
 
 

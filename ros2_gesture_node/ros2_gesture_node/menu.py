@@ -3,9 +3,9 @@
 동작 규약 (설계 합의 0605):
   IDLE: like(따봉)만 감시. trigger_hold(1.5s) 유지 → 메뉴 열림.
   MENU: one~four = 항목 선택(select_hold 유지 = 확정),
-        palm     = 한 단계 뒤로 (루트에서는 메뉴 닫기),
+        dislike(거꾸로 따봉) = 한 단계 뒤로 (루트에서는 메뉴 닫기),
         menu_timeout(10s) 무입력 = 자동 취소.
-  ※ five는 palm과 같은 손모양이라 메뉴 번호로 쓰지 않는다 (one~four만).
+  ※ palm(보자기)은 모드 번호 five와 헷갈려 메뉴 번호로 쓰지 않는다 (one~four만).
 
 확정/오인식 방지:
   - 같은 제스처가 hold 시간 동안 유지되어야 발동. 짧은 인식 끊김은
@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 
 # 사용하는 제스처 어휘 (HaGRID 클래스의 부분집합; 별칭 통합은 recognizer 쪽)
 TRIGGER = "like"
-BACK = "palm"
+BACK = "dislike"   # 거꾸로 따봉(reverse thumbs-up) = 뒤로/닫기
 SELECT_KEYS = ("one", "two", "three", "four")
 
 
@@ -55,7 +55,7 @@ class MenuNode:
 class Event:
     """update()가 돌려주는 사건. 노드가 이걸 보고 토픽을 발행한다."""
     kind: str                      # 'open' | 'close' | 'navigate' | 'action'
-    reason: str = ""               # close: 'done' | 'palm' | 'timeout'
+    reason: str = ""               # close: 'done' | 'back' | 'timeout'
     action: Optional[Action] = None
 
 
@@ -177,6 +177,7 @@ class MenuStateMachine:
             "items": items,
             "hold_gesture": self._cand or "",
             "hold_progress": round(progress, 3),
+            "repeating": self._repeating,   # 연속(jog) 적용 중?
             "last_action": self.last_action_name,
         }
 
@@ -225,7 +226,7 @@ class MenuStateMachine:
                 self._await_release = BACK
                 self._cand = None
             else:
-                self._close("palm", ev)
+                self._close("back", ev)
                 self._await_release = BACK
             return
         child = cur.children[gesture]

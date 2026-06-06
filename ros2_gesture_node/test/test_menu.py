@@ -99,17 +99,17 @@ def test_stay_repeat_stops_on_release():
     assert not [e for e in evs if e.kind == "action"]
 
 
-def test_palm_back_then_close():
+def test_dislike_back_then_close():
     sm = make_sm()
     t = open_menu(sm)
     _, t = feed(sm, "three", t, 1.6)             # 리프트 진입
     feed(sm, None, t, 0.1); t += 0.2
-    evs, t = feed(sm, "palm", t, 1.6)            # 뒤로 → 메인
+    evs, t = feed(sm, "dislike", t, 1.6)            # 거꾸로따봉 뒤로 → 메인
     assert "navigate" in kinds(evs) and sm.state == "MENU"
     feed(sm, None, t, 0.1); t += 0.2
-    evs, t = feed(sm, "palm", t, 1.6)            # 메인에서 palm → 닫기
+    evs, t = feed(sm, "dislike", t, 1.6)            # 메인에서 거꾸로따봉 → 닫기
     close = [e for e in evs if e.kind == "close"]
-    assert close and close[0].reason == "palm" and sm.state == "IDLE"
+    assert close and close[0].reason == "back" and sm.state == "IDLE"
 
 
 def test_timeout_closes():

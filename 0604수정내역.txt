@@ -566,3 +566,14 @@
       (_border_fill_lr). 확정 시 0.1초 흰 플래시는 메뉴에서만(연속은 제외).
    - hud.py(실제 LCD)·ui_preview_tk.py(설치 불필요 프리뷰) 동일 적용.
      hud.py 오프스크린 렌더로 3종 상태(메뉴/연속/따봉게이지) 시각 검증.
+
+ - UI 2차 피드백 반영 (0606):
+   1) 연속(jog): 보라 테두리가 다 찬 뒤 명령 적용 순간(repeating)부터는
+      손 뗄 때까지 카드를 계속 흰색으로 표시. snapshot에 repeating 플래그 추가.
+   2) back 제스처를 palm → dislike(거꾸로 따봉)로 변경. recognizer에 dislike
+      별칭 추가. 프리뷰는 K 키로 dislike 흉내. close reason 'palm'→'back'.
+   3) 단발(모드/카테고리/단발동작) 카드: 테두리가 다 차면 0.1초 흰색 반짝 후
+      전환. 프리뷰 flash 감지를 _draw 레벨로 올려 메뉴 닫힘/전환에도 보이게.
+   4) 우상단 녹화표시 'REC mm:ss' + 빨간 점으로 정정(글자 깨짐 수정,
+      텍스트 폭 측정해 점 위치 배치).
+   - menu/hud/ui_preview_tk 동일 적용, test_menu 11건 PASS (palm→dislike 갱신).
