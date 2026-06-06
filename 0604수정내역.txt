@@ -550,3 +550,7 @@
  - 메뉴 라벨 한글→영어 (Drive/Frame/Lift/Camera, 하위도). pygame 기본 폰트
    한글 깨짐 회피. test_menu 라벨 단언도 영어로 갱신, 10건 PASS.
  - 검증: SDL dummy 오프스크린 렌더 PNG 확인(영어 라벨/보라 fill 정상).
+
+ - tools/ui_preview_tk.py 추가: 설치 불필요 tkinter 프리뷰. Python 3.14 등
+   pygame wheel 미배포 환경 대비(소스 컴파일 실패 회피). menu.py 상태기계는
+   그대로 공유하고 그리기만 tkinter로 재구현(테마/레이아웃 hud.py와 일치).
