@@ -36,7 +36,7 @@ like 1.5s ─▶ 메인 메뉴
 | `menu.py` | 메뉴 트리 정의(`build_menu`) + 상태기계. ROS 무관 — 항목 추가는 여기만 |
 | `recognizer.py` | HaGRID YOLO 인식기(ultralytics) + Mock. HaGRID 클래스 별칭 통합 |
 | `gesture_node.py` | ROS 입출력. 인식 → 상태기계 → 사건을 토픽으로 번역 |
-| `ui_node.py` | LCD 렌더링(pygame, 최소 구현). 미설치 시 콘솔 폴백 |
+| `ui_node.py` | LCD UI(pygame). 영상 배경 + 하단 메뉴 독(보라 fill + 흰 플래시), 모드·REC·배터리 |
 | `config/gesture_params.yaml` | 유지시간·조절폭 등 파라미터 전부 |
 | `test/test_menu.py` | 상태기계 단위테스트 10건 (ROS 불필요) |
 
