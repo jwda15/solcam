@@ -74,10 +74,13 @@ def list_cameras(ffmpeg):
     """dshow(Windows) 카메라 장치 목록을 stderr로 출력."""
     if not ffmpeg:
         print("ffmpeg 없음: pip install imageio-ffmpeg 또는 ffmpeg 설치"); return
+    # text=True 금지: 한글 윈도우(cp949)에서 ffmpeg UTF-8 출력 디코드 실패.
+    #  바이트로 받아 UTF-8(replace)로 직접 디코드한다.
     r = subprocess.run([ffmpeg, "-hide_banner", "-list_devices", "true",
                         "-f", "dshow", "-i", "dummy"],
-                       capture_output=True, text=True)
-    print(r.stderr or r.stdout)
+                       capture_output=True)
+    out = (r.stderr or r.stdout or b"").decode("utf-8", errors="replace")
+    print(out)
 
 
 class CameraStream:
