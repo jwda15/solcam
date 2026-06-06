@@ -604,3 +604,11 @@
    * mock:=true 면 폰/도구 없이 합성영상+가짜배터리로 동작(UI 배선 점검)
    * 셋업 스크립트(v4l2loopback/scrcpy) + launch + README + 배터리파싱 테스트(4건)
    * 별도 안드로이드 앱 개발 불필요. 줌/포커스는 캡처 방식 확정 후 진행 예정.
+
+ - 윈도우 프리뷰에 폰 카메라 배경 추가 (0606):
+   * ui_preview_tk.py --camera 옵션: 폰을 윈도우 웹캠으로 잡고(안드 14+ USB
+     웹캠 모드/DroidCam/Iriun) ffmpeg 로 rawvideo 받아 tkinter 배경에 표시.
+     cv2/pygame/numpy 불필요(파이썬 3.14 wheel 문제 회피) — ffmpeg만 사용,
+     imageio-ffmpeg(순수 py3 wheel)로 자동 해결. PPM→base64→PhotoImage.
+   * --list-cameras 로 dshow 장치명 확인. --cam-size/--cam-fps/--input-format.
+   * 파이프 read 부분수신 버그 수정(frame_bytes 누적). ffmpeg testsrc로 검증.
