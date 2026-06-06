@@ -36,6 +36,7 @@ like 1.5s ─▶ 메인 메뉴
 | `menu.py` | 메뉴 트리 정의(`build_menu`) + 상태기계. ROS 무관 — 항목 추가는 여기만 |
 | `recognizer.py` | HaGRID YOLO 인식기(ultralytics) + Mock. HaGRID 클래스 별칭 통합 |
 | `gesture_node.py` | ROS 입출력. 인식 → 상태기계 → 사건을 토픽으로 번역 |
+| `hud.py` | UI 렌더(ROS 무관) — ui_node와 프리뷰 공용 |
 | `ui_node.py` | LCD UI(pygame). 영상 배경 + 하단 메뉴 독(보라 fill + 흰 플래시), 모드·REC·배터리 |
 | `config/gesture_params.yaml` | 유지시간·조절폭 등 파라미터 전부 |
 | `test/test_menu.py` | 상태기계 단위테스트 10건 (ROS 불필요) |
@@ -47,6 +48,19 @@ pip install "ultralytics>=8.2" pygame   # mock 모드는 둘 다 불필요
 ./models/download.sh                     # YOLOv10n_gestures.pt (22MB)
 # 모델 라이선스: CC BY-SA 4.0 변형 (hagrid 저장소 license/ 참조) → 깃에 커밋 금지
 ```
+
+## UI 미리보기 (Windows/PC, ROS 불필요)
+
+LCD 화면을 ROS 없이 키보드로 확인:
+
+```bash
+pip install pygame numpy
+cd ros2_gesture_node
+python tools/ui_preview.py
+```
+L=따봉(메뉴 열기) · 1~4=선택(꾹) · P=손바닥(뒤로/닫기) · R=REC · B=배터리 · ESC.
+실제 상태기계(menu.py)+렌더(hud.py)를 그대로 써서 LCD에 뜨는 화면과 동일하다
+(배경 영상만 없어 CAMERA 표시).
 
 ## 실행
 

@@ -112,7 +112,7 @@ def test_no_double_select_without_release():
     evs, t = feed(sm, "one", t, 4.0)             # 4초 내내 'one' 유지
     acts = [e for e in evs if e.kind == "action"]
     assert not acts                              # 팔로우(하위 1번) 자동선택 금지
-    assert sm.path[-1].label == "주행 모드"
+    assert sm.path[-1].label == "Drive"
 
 
 def test_invalid_gesture_in_menu_ignored():

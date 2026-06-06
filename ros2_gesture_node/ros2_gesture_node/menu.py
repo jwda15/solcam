@@ -62,37 +62,37 @@ def build_menu(p: dict) -> MenuNode:
     """메뉴 트리 정의. p = 조절 폭 파라미터 (yaml에서 옴).
     ★새 항목/카테고리 추가는 여기에 한 줄 — 코드 다른 곳 수정 불필요."""
     deg = 3.141592653589793 / 180.0
-    return MenuNode("메인", children={
-        "one": MenuNode("주행 모드", children={
-            "one":   MenuNode("팔로우",  action=Action("mode", "팔로우 모드",  {"mode": 1})),
-            "two":   MenuNode("회전",    action=Action("mode", "회전 모드",    {"mode": 2})),
-            "three": MenuNode("정지",    action=Action("mode", "정지(IDLE)",  {"mode": 0})),
+    return MenuNode("Main", children={
+        "one": MenuNode("Drive", children={
+            "one":   MenuNode("Follow",  action=Action("mode", "Follow",  {"mode": 1})),
+            "two":   MenuNode("Rotate",    action=Action("mode", "Rotate",    {"mode": 2})),
+            "three": MenuNode("Idle",    action=Action("mode", "Idle",  {"mode": 0})),
         }),
-        "two": MenuNode("거리·구도", children={
-            "one":   MenuNode("멀리",    action=Action("adjust", "거리 +%.1fm" % p["dist_step"],
+        "two": MenuNode("Frame", children={
+            "one":   MenuNode("Farther",    action=Action("adjust", "Dist +%.1fm" % p["dist_step"],
                                                        {"param": "SEG_DISTANCE", "value": +p["dist_step"], "delta": True}, stay=True)),
-            "two":   MenuNode("가까이",  action=Action("adjust", "거리 -%.1fm" % p["dist_step"],
+            "two":   MenuNode("Closer",  action=Action("adjust", "Dist -%.1fm" % p["dist_step"],
                                                        {"param": "SEG_DISTANCE", "value": -p["dist_step"], "delta": True}, stay=True)),
             # 헤딩 오프셋: CCW+ = 좌. (★실차에서 좌우 부호 확인할 것)
-            "three": MenuNode("헤딩 좌", action=Action("adjust", "헤딩 좌 %.0f°" % p["heading_step_deg"],
+            "three": MenuNode("Pan L", action=Action("adjust", "Pan L %.0f" % p["heading_step_deg"],
                                                        {"param": "HEADING_OFFSET", "value": +p["heading_step_deg"] * deg, "delta": True}, stay=True)),
-            "four":  MenuNode("헤딩 우", action=Action("adjust", "헤딩 우 %.0f°" % p["heading_step_deg"],
+            "four":  MenuNode("Pan R", action=Action("adjust", "Pan R %.0f" % p["heading_step_deg"],
                                                        {"param": "HEADING_OFFSET", "value": -p["heading_step_deg"] * deg, "delta": True}, stay=True)),
         }),
-        "three": MenuNode("리프트", children={
-            "one": MenuNode("올리기", action=Action("adjust", "리프트 +%.2fm" % p["lift_step"],
+        "three": MenuNode("Lift", children={
+            "one": MenuNode("Up", action=Action("adjust", "Lift +%.2fm" % p["lift_step"],
                                                     {"param": "LIFT_HEIGHT", "value": +p["lift_step"], "delta": True}, stay=True)),
-            "two": MenuNode("내리기", action=Action("adjust", "리프트 -%.2fm" % p["lift_step"],
+            "two": MenuNode("Down", action=Action("adjust", "Lift -%.2fm" % p["lift_step"],
                                                     {"param": "LIFT_HEIGHT", "value": -p["lift_step"], "delta": True}, stay=True)),
         }),
-        "four": MenuNode("촬영·시스템", children={
-            "one": MenuNode("폰 카메라", children={      # 폰 연동은 자리만 (/phone_cmd)
-                "one":   MenuNode("줌 +",   action=Action("phone", "폰 줌 +",   {"cmd": "zoom_in"},  stay=True)),
-                "two":   MenuNode("줌 -",   action=Action("phone", "폰 줌 -",   {"cmd": "zoom_out"}, stay=True)),
-                "three": MenuNode("포커스", action=Action("phone", "폰 포커스", {"cmd": "focus"})),
+        "four": MenuNode("Camera", children={
+            "one": MenuNode("Phone", children={      # 폰 연동은 자리만 (/phone_cmd)
+                "one":   MenuNode("Zoom +",   action=Action("phone", "Zoom +",   {"cmd": "zoom_in"},  stay=True)),
+                "two":   MenuNode("Zoom -",   action=Action("phone", "Zoom -",   {"cmd": "zoom_out"}, stay=True)),
+                "three": MenuNode("Focus", action=Action("phone", "Focus", {"cmd": "focus"})),
             }),
-            "two":   MenuNode("OAK 화면",  action=Action("ui", "OAK 화면 토글", {"toggle": "oak_view"}, stay=True)),
-            "three": MenuNode("전원 끄기", action=Action("system", "전원 끄기", {"cmd": "shutdown"})),  # 자리만 (/system_cmd)
+            "two":   MenuNode("OAK view",  action=Action("ui", "OAK view", {"toggle": "oak_view"}, stay=True)),
+            "three": MenuNode("Power off", action=Action("system", "Power off", {"cmd": "shutdown"})),  # 자리만 (/system_cmd)
         }),
     })
 
