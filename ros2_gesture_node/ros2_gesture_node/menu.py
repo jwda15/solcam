@@ -96,6 +96,7 @@ def build_menu(p: dict) -> MenuNode:
             }),
             "two":   MenuNode("OAK view",  action=Action("ui", "OAK view", {"toggle": "oak_view"}, stay=True)),
             "three": MenuNode("Power off", action=Action("system", "Power off", {"cmd": "shutdown"})),  # 자리만 (/system_cmd)
+            "four":  MenuNode("Rec", action=Action("phone", "Rec", {"cmd": "record_toggle"})),  # 폰 촬영 시작/종료 토글 (/phone_cmd)
         }),
     })
 

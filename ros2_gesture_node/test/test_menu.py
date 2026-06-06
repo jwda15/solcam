@@ -152,3 +152,15 @@ def test_phone_and_system_leaves():
     acts = [e for e in evs if e.kind == "action"]
     assert acts and acts[0].action.kind == "phone"
     assert acts[0].action.payload["cmd"] == "zoom_in"
+
+
+def test_record_toggle_leaf():
+    """메인 4번(Other)의 Rec = 폰 촬영 시작/종료 토글."""
+    sm = make_sm()
+    t = open_menu(sm)
+    _, t = feed(sm, "four", t, 1.6)              # Other 진입
+    feed(sm, None, t, 0.1); t += 0.2
+    evs, _ = feed(sm, "four", t, 1.6)            # Rec
+    acts = [e for e in evs if e.kind == "action"]
+    assert acts and acts[0].action.kind == "phone"
+    assert acts[0].action.payload["cmd"] == "record_toggle"

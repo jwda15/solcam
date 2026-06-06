@@ -577,3 +577,11 @@
    4) 우상단 녹화표시 'REC mm:ss' + 빨간 점으로 정정(글자 깨짐 수정,
       텍스트 폭 측정해 점 위치 배치).
    - menu/hud/ui_preview_tk 동일 적용, test_menu 11건 PASS (palm→dislike 갱신).
+
+ - UI 3차 피드백 반영 (0606):
+   1) 거꾸로 따봉(back) 유지에도 작은 파란 게이지 표시(카드 위 중앙).
+      _gauge 공용 헬퍼로 따봉/거꾸로따봉 게이지 통일.
+   2) 차오름 색을 보라(#7f77dd) → 테마 블루 #1e90ff 로 변경(ACCENT=FILL 통일).
+   3) 메인 4번(Other)에 'Rec' 추가 — 폰 촬영 시작/종료 토글
+      (phone/record_toggle → /phone_cmd). test_menu에 케이스 추가(12건 PASS).
+   - menu/hud/ui_preview_tk 동일 적용.

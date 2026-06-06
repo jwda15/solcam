@@ -24,8 +24,8 @@ from ros2_gesture_node.menu import MenuStateMachine, build_menu
 BG      = "#0d0f12"
 CARD    = "#1a1e24"
 BASE    = "#3c465c"   # 기저 테두리
-ACCENT  = "#4a90e2"   # 파랑(따봉 게이지)
-FILL    = "#7f77dd"   # 보라(테두리 차오름)
+ACCENT  = "#1e90ff"   # 테마 블루(게이지+테두리)
+FILL    = "#1e90ff"   # = ACCENT (테두리 차오름)
 WHITE   = "#f4f6f8"
 INK     = "#12141a"   # 흰 카드 위 글자색
 DIM     = "#aeb4bd"
@@ -119,7 +119,8 @@ class Preview:
         else:
             c.create_text(W//2, H-58, text="show LIKE to open menu  (press L)",
                           fill=DIM, font=("Segoe UI", 12))
-            self._trigger(snap)
+            if snap.get("hold_gesture") == "like":
+                self._gauge(W//2, H-40, snap.get("hold_progress", 0.0))
         self._draw_flash()
 
     # 단발 확정 흰 반짝 감지 (연속 jog는 제외)
@@ -166,15 +167,14 @@ class Preview:
             dot_x = x - self.f_rec.measure(txt) - 11
             c.create_oval(dot_x-4, 20, dot_x+4, 28, fill=REC_RED, outline="")
 
-    def _trigger(self, snap):
-        if snap.get("hold_gesture") != "like": return
-        prog = snap.get("hold_progress", 0.0)
-        if prog <= 0: return
+    def _gauge(self, cx, cy, frac):
+        """작은 파란 게이지 (따봉/거꾸로따봉 공용)."""
+        if frac <= 0: return
         c = self.cv
         bw, bh = 160, 6
-        x, y = (W-bw)//2, H-40
+        x, y = cx - bw//2, cy
         self._rrect(x, y, bw, bh, 3, fill=BASE, outline="")
-        c.create_rectangle(x, y, x+max(1, int(bw*min(1.0, prog))), y+bh,
+        c.create_rectangle(x, y, x+max(1, int(bw*min(1.0, frac))), y+bh,
                            fill=ACCENT, outline="")
 
     def _dock(self, snap):
@@ -207,6 +207,9 @@ class Preview:
             c.create_text(x+cw//2, y+ch//2,
                           text=f"{GNUM.get(it['gesture'],'')}  {it['label']}",
                           fill=txtcol, font=("Segoe UI", 15, "bold"))
+        # 거꾸로 따봉(back) 게이지 — 카드 위 중앙
+        if hold_g == "dislike":
+            self._gauge(W//2, y-16, prog)
         path = " > ".join(snap.get("path", []))
         c.create_text(x0, y-18, text=path, anchor="w", fill=DIM,
                       font=("Segoe UI", 12))
