@@ -64,3 +64,4 @@ control_node:
     owner_timeout: 0.5      # s
     odom_timeout: 0.5       # s
     proximity_timeout: 0.3  # s
+    teleop_timeout: 0.5     # s, /teleop_cmd 끊김 판정 (모드0 → 정지)

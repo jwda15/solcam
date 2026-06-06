@@ -19,9 +19,11 @@
 //  T10 최종 클램프: 과대 명령도 v_max/w_body_max 를 절대 못 넘음 (방향 보존)
 //  T11 리드 제한  : 상단yaw 드라이버 정지 시 목표각 폭주 방지 (top_lead_max)
 //  T12 선분 클램프: 손동작 이상값에도 D가 seg_d_min~max 를 못 벗어남
+//  T13 모드0 teleop: 키보드 목표속도 추종 + 상단yaw 정지 + hold 시 정지
 // ============================================================================
 #include "control_node/follow_controller.hpp"
 #include "control_node/rotate_controller.hpp"
+#include "control_node/idle_controller.hpp"
 #include "control_node/state_estimator.hpp"
 
 #include <algorithm>
@@ -425,6 +427,40 @@ int main()
     std::snprintf(buf, sizeof(buf), "10m→%.1f(상한 %.1f), -20m→%.1f(하한 %.1f)",
                   d_hi, P.seg_d_max, d_lo, P.seg_d_min);
     check(d_hi == P.seg_d_max && d_lo == P.seg_d_min, "T12 선분 거리 클램프", buf);
+  }
+
+  // ---------- T13: 모드0 IDLE — teleop 추종 / 상단yaw 정지 / hold 정지 ----------
+  {
+    IdleController ctrl;  ctrl.configure(P);  ctrl.reset();
+    // requiresOwner=false (추적 없이 동작)
+    bool need_owner = ctrl.requiresOwner();
+
+    ControlInput in;
+    in.robot.valid = true;
+    in.theta_head = 0.7;            // 상단 스테이지 임의 각
+    in.dt = dt;
+    ctrl.engage(in);
+
+    // teleop 전진+좌 (대각선). 가속제한 때문에 여러 스텝 후 목표 도달.
+    in.teleop_vx = 0.3; in.teleop_vy = 0.2; in.teleop_wz = 0.0;
+    ControlCommand cmd;
+    for (int i = 0; i < 200; ++i) { cmd = ctrl.step(in); }
+    bool reaches = std::abs(cmd.body_vx - 0.3) < 1e-3 &&
+                   std::abs(cmd.body_vy - 0.2) < 1e-3;
+    bool top_stopped = (cmd.top_yaw_active == false);
+
+    // hold_body=true → 몸체 감속 정지
+    in.hold_body = true;
+    for (int i = 0; i < 200; ++i) { cmd = ctrl.step(in); }
+    bool held = std::hypot(cmd.body_vx, cmd.body_vy) < 1e-9;
+
+    char buf[160];
+    std::snprintf(buf, sizeof(buf),
+      "need_owner=%d teleop(vx=%.2f vy=%.2f) top_active=%d hold후속도=%.3f",
+      need_owner ? 1 : 0, cmd.body_vx, cmd.body_vy,
+      cmd.top_yaw_active ? 1 : 0, std::hypot(cmd.body_vx, cmd.body_vy));
+    check(!need_owner && reaches && top_stopped && held,
+          "T13 모드0 teleop", buf);
   }
 
   std::printf("== 결과: %s ==\n", g_fail == 0 ? "ALL PASS" : "FAIL 있음");

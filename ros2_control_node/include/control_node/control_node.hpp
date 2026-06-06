@@ -23,6 +23,7 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/float32.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 
 #include "ros2_tracking_node/msg/owner_pose.hpp"
@@ -34,6 +35,7 @@
 #include "control_node/params.hpp"
 #include "control_node/types.hpp"
 #include "control_node/controller.hpp"
+#include "control_node/idle_controller.hpp"
 #include "control_node/follow_controller.hpp"
 #include "control_node/rotate_controller.hpp"
 #include "control_node/state_estimator.hpp"
@@ -51,6 +53,7 @@ private:
   // ----- 콜백 (입력 캐시만; 제어는 타이머에서) -----
   void ownerCallback(const ros2_tracking_node::msg::OwnerPose::SharedPtr msg);
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void teleopCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
   void topYawCallback(const std_msgs::msg::Float32::SharedPtr msg);
   void modeCallback(const std_msgs::msg::Int32::SharedPtr msg);
   void gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg);
@@ -71,6 +74,7 @@ private:
   bool ownerTimedOut() const;
   bool odomTimedOut() const;
   bool proximityTimedOut() const;
+  bool teleopTimedOut() const;
   static double yawFromQuat(double x, double y, double z, double w);
 
   // ----- 파라미터 (튜닝값 정의는 전부 params.hpp) -----
@@ -88,12 +92,15 @@ private:
   bool        have_prev_theta_ = false;
   UserAdjust  adjust_;               // 손동작 조정값 (모드 전환에도 유지)
   bool        gesture_active_ = false;   // 손동작 세션 중(몸체 일시정지)
+  double      teleop_vx_ = 0.0, teleop_vy_ = 0.0, teleop_wz_ = 0.0;  // 키보드 teleop
   rclcpp::Time last_owner_time_;
+  rclcpp::Time last_teleop_time_;
   rclcpp::Time last_odom_time_;
   rclcpp::Time last_proximity_time_;
   rclcpp::Time last_step_time_;
 
   // ----- 부품 (전략 패턴: controllerFor()가 모드에 맞는 제어기 선택) -----
+  IdleController   idle_controller_;     // 모드0: 정지 + 키보드 teleop
   FollowController follow_controller_;   // 모드1: 선분 유지
   RotateController rotate_controller_;   // 모드2: 제자리 회전 추적
   StateEstimator   estimator_;
@@ -105,6 +112,7 @@ private:
   rclcpp::Publisher<ros2_control_node::msg::ControlDebug>::SharedPtr debug_pub_;
   rclcpp::Subscription<ros2_tracking_node::msg::OwnerPose>::SharedPtr owner_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr teleop_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr top_yaw_sub_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr mode_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr gesture_sub_;

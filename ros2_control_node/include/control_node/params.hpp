@@ -119,6 +119,7 @@ struct NodeParams
   double owner_timeout     = 0.5;   // s, /owner_pose 끊김 판정
   double odom_timeout      = 0.5;   // s, /odom 끊김 판정
   double proximity_timeout = 0.3;   // s, /proximity 끊김 판정(회피 비활성)
+  double teleop_timeout    = 0.5;   // s, /teleop_cmd 끊김 판정(모드0 → 정지)
 };
 
 }  // namespace control_node

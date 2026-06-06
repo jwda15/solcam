@@ -30,6 +30,10 @@ struct ControlInput
   UserAdjust adjust;             // 손동작 조정값 (헤딩 오프셋/리프트 등)
   bool       hold_body = false;  // true=손동작 세션 중 → 몸체만 정지
                                  //  (상단 yaw 락온·추정은 계속. /gesture_active)
+  // 키보드 teleop (모드0 IDLE 전용). 몸체 프레임 목표속도. 끊기면 0.
+  double     teleop_vx = 0.0;    // m/s, +전방
+  double     teleop_vy = 0.0;    // m/s, +좌측
+  double     teleop_wz = 0.0;    // rad/s, +CCW
   double     dt = 0.02;          // 경과시간 [s]
 };
 
@@ -53,6 +57,11 @@ public:
 
   // 한 스텝 제어. 반환: 6자유도 명령(아직 장애물 보정 전).
   virtual ControlCommand step(const ControlInput & in) = 0;
+
+  // engage 전에 주인 글로벌 추정이 반드시 필요한가?
+  //  true(기본): 추정이 설 때까지 진입 대기(정지). 모드1·2처럼 주인 기준 모드.
+  //  false: 추정 없이도 즉시 동작 (IDLE teleop — 부팅 직후 추적 전에도 주행).
+  virtual bool requiresOwner() const { return true; }
 };
 
 }  // namespace control_node

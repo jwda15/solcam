@@ -16,6 +16,7 @@
 
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>ros2_tracking_node</depend>
 

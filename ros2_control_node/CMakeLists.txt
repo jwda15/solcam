@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)         # Twist 사용(키보드 teleop)
 find_package(nav_msgs REQUIRED)             # Odometry.msg 사용(휠 오도메트리)
 find_package(rosidl_default_generators REQUIRED)
 find_package(ros2_tracking_node REQUIRED)   # OwnerPose.msg 사용
@@ -29,6 +30,7 @@ add_executable(control_node
   src/obstacle_field.cpp      # 측면센서 간단 회피
   src/state_estimator.cpp     # 주인 글로벌 위치 추정
   src/controller_base.cpp     # 모드 공통 부품 (상단yaw 락온/슬루/헤딩)
+  src/idle_controller.cpp     # 모드0(IDLE) 정지 + 키보드 teleop
   src/follow_controller.cpp   # 모드1(FOLLOW) 선분 유지
   src/rotate_controller.cpp   # 모드2(ROTATE) 제자리 회전 추적
   src/control_node.cpp        # ROS 노드 (구독/발행/타이머)
@@ -39,7 +41,7 @@ target_include_directories(control_node PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(control_node
-  rclcpp std_msgs nav_msgs ros2_tracking_node
+  rclcpp std_msgs geometry_msgs nav_msgs ros2_tracking_node
 )
 
 # 같은 패키지 안에서 생성한 메시지(ControlCmd/ProximityArray)를 노드에 링크.
@@ -59,6 +61,11 @@ install(DIRECTORY include/
 )
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
+)
+# 키보드 teleop (파이썬, rclpy). ros2 run ros2_control_node teleop_keyboard 가능.
+install(PROGRAMS scripts/teleop_keyboard.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME teleop_keyboard
 )
 
 ament_package()

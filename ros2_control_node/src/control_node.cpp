@@ -34,6 +34,7 @@ ControlNode::ControlNode()
   declareParams();
   loadParams();
 
+  idle_controller_.configure(params_);
   follow_controller_.configure(params_);
   rotate_controller_.configure(params_);
   engaged_ = false;
@@ -52,6 +53,8 @@ ControlNode::ControlNode()
     "/owner_pose", 10, std::bind(&ControlNode::ownerCallback, this, _1));
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
     "/odom", 10, std::bind(&ControlNode::odomCallback, this, _1));
+  teleop_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+    "/teleop_cmd", 10, std::bind(&ControlNode::teleopCallback, this, _1));
   top_yaw_sub_ = this->create_subscription<std_msgs::msg::Float32>(
     "/top_yaw_state", 10, std::bind(&ControlNode::topYawCallback, this, _1));
   mode_sub_ = this->create_subscription<std_msgs::msg::Int32>(
@@ -71,6 +74,7 @@ ControlNode::ControlNode()
     std::bind(&ControlNode::controlStep, this));
 
   last_owner_time_     = this->now();
+  last_teleop_time_    = this->now();
   last_odom_time_      = this->now();
   last_proximity_time_ = this->now();
   last_step_time_      = this->now();
@@ -141,6 +145,7 @@ void ControlNode::declareParams()
   this->declare_parameter("owner_timeout",     n.owner_timeout);
   this->declare_parameter("odom_timeout",      n.odom_timeout);
   this->declare_parameter("proximity_timeout", n.proximity_timeout);
+  this->declare_parameter("teleop_timeout",    n.teleop_timeout);
 }
 
 // ============================================================================
@@ -190,6 +195,7 @@ void ControlNode::loadParams()
   node_params_.owner_timeout     = this->get_parameter("owner_timeout").as_double();
   node_params_.odom_timeout      = this->get_parameter("odom_timeout").as_double();
   node_params_.proximity_timeout = this->get_parameter("proximity_timeout").as_double();
+  node_params_.teleop_timeout     = this->get_parameter("teleop_timeout").as_double();
 
   mode_ = static_cast<Mode>(node_params_.start_mode);
 }
@@ -221,6 +227,15 @@ void ControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
     msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
   odom_wz_ = msg->twist.twist.angular.z;   // 카메라 지연 보상용 yaw rate
   last_odom_time_ = this->now();
+}
+
+// 키보드 teleop(모드0): 몸체 프레임 목표속도 캐시. (teleop_keyboard.py 발행)
+void ControlNode::teleopCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+{
+  teleop_vx_ = msg->linear.x;
+  teleop_vy_ = msg->linear.y;
+  teleop_wz_ = msg->angular.z;
+  last_teleop_time_ = this->now();
 }
 
 // 상단 yaw 스테이지 현재 각[rad] (스텝모터 펄스 누적값을 드라이버가 발행).
@@ -305,11 +320,9 @@ void ControlNode::controlStep()
 
   // 1) 현재 모드의 제어기 선택. 없으면(IDLE/미구현) 정지.
   IController * ctrl = controllerFor(mode_);
-  if (ctrl == nullptr) {
-    if (mode_ != Mode::IDLE) {
-      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-        "모드 %d 미구현 → 정지", static_cast<int>(mode_));
-    }
+  if (ctrl == nullptr) {   // 미구현 모드(3·4 등) → 정지 폴백
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+      "모드 %d 미구현 → 정지", static_cast<int>(mode_));
     publishStop();
     return;
   }
@@ -347,11 +360,17 @@ void ControlNode::controlStep()
   in.theta_head = theta_head_;
   in.adjust = adjust_;
   in.hold_body = gesture_active_;   // 손동작 세션 중엔 몸체만 정지
+  if (!teleopTimedOut()) {          // 키보드 teleop(모드0). 끊기면 0 → 자연 정지
+    in.teleop_vx = teleop_vx_;
+    in.teleop_vy = teleop_vy_;
+    in.teleop_wz = teleop_wz_;
+  }
   in.dt = dt;
 
-  // 4) 모드 진입 처리: 기준을 안 잡았으면 engage(예: 모드1 선분 캡처)
+  // 4) 모드 진입 처리: 기준을 안 잡았으면 engage(예: 모드1 선분 캡처).
+  //    IDLE처럼 requiresOwner()=false면 추정 없이도 즉시 진입(teleop).
   if (!engaged_) {
-    if (in.owner_global_valid) {
+    if (!ctrl->requiresOwner() || in.owner_global_valid) {
       ctrl->reset();
       ctrl->engage(in);
       engaged_ = true;
@@ -389,9 +408,10 @@ void ControlNode::controlStep()
 IController * ControlNode::controllerFor(Mode mode)
 {
   switch (mode) {
+    case Mode::IDLE:   return &idle_controller_;
     case Mode::FOLLOW: return &follow_controller_;
     case Mode::ROTATE: return &rotate_controller_;
-    default:           return nullptr;   // IDLE/미구현 → 정지 폴백
+    default:           return nullptr;   // 미구현(3·4) → 정지 폴백
   }
 }
 
@@ -409,6 +429,11 @@ bool ControlNode::proximityTimedOut() const
 {
   return (this->now() - last_proximity_time_).seconds() >
          node_params_.proximity_timeout;
+}
+
+bool ControlNode::teleopTimedOut() const
+{
+  return (this->now() - last_teleop_time_).seconds() > node_params_.teleop_timeout;
 }
 
 // 평면 yaw 만 필요하므로 z/w 로 추출 (roll/pitch 무시).

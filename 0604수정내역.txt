@@ -472,3 +472,42 @@
    (부족하면 OAK 고해상 스트림 추가 or MediaPipe Pose 폴백)
  - 주인 bbox ROI(행인 손 무시), LCD UI 디자인, 폰/전원 수신측
 ============================================================================
+
+============================================================================
+ 0605 — 모드0(IDLE) 구현 + 키보드 teleop
+============================================================================
+ [설계 합의]
+ - 모드0 = 대기 + 수동주행. 자율추적 정지, 상단 yaw 정지(현위치 유지),
+   리프트 손동작은 동작, 손동작으로 모드 변경 가능(초기 모드이므로 필수).
+   모드변경 외 손동작 명령(리프트 등)도 받음.
+ - 키보드: 방향키 = 몸체 vx/vy(동시입력=대각선), a/d = 몸체 yaw 좌/우회전,
+   space=정지. m → 디스플레이에 모드 0~5 표시 → 숫자키로 모드 변경.
+
+ [control_node]
+ - IdleController(모드0) 신규: 상단yaw active=false(정지),
+   applyLift(리프트 손동작 반영), hold_body면 감속정지, 아니면 teleop 추종.
+   requiresOwner()=false → 부팅 직후 추적 전에도 즉시 주행 가능.
+ - IController::requiresOwner() 추가(기본 true). controlStep의 engage
+   게이팅을 "requiresOwner && !owner_valid 일 때만 대기"로 완화.
+ - ControlInput에 teleop_vx/vy/wz 추가. /teleop_cmd(geometry_msgs/Twist)
+   구독·캐시·타임아웃(teleop_timeout 0.5s, 끊기면 0=자연정지).
+ - controllerFor()에 IDLE→idle_controller_ 매핑(이전엔 nullptr 정지였음).
+ - teleop도 writeBodyCommand(가속제한)+발행 직전 최종 클램프를 거침(안전).
+ - geometry_msgs 의존 복귀(Twist), teleop_timeout 파라미터 추가.
+
+ [scripts/teleop_keyboard.py] 신규 (rclpy, pygame)
+ - pygame.key.get_pressed() 전체상태 폴링 → 방향키 동시입력 대각선 자연 합성,
+   대각선은 speed로 크기 정규화. a/d 회전, space 정지.
+ - m → 모드 선택 오버레이(0~5 표시) → 숫자키로 /control_mode 발행.
+ - /teleop_cmd(Twist), /control_mode(Int32) 발행.
+ - CMakeLists install(PROGRAMS ... RENAME teleop_keyboard) →
+   ros2 run ros2_control_node teleop_keyboard.
+
+ [검증] T13 추가: requiresOwner=false 확인, teleop(대각선) 가속제한 후
+   목표속도 도달, 상단yaw active=false(정지), hold_body 시 감속정지.
+   T1~T13 ALL PASS, -Wall -Wextra 경고 0, ASan/UBSan 통과, 파라미터 정합.
+
+ [남은 일]
+ - 모드 선택 오버레이를 로봇 LCD(ui_node)에도 표시할지(현재 teleop 자체 창).
+ - teleop은 실기에서 pygame 창 포커스 필요 — 노트북에서 조작 가정.
+============================================================================
