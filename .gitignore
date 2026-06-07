@@ -52,3 +52,6 @@ _check.txt
 *.out
 *.app
 .depthai_cached_models/
+
+# depthai 크래시덤프 등 캐시(추적 안 함)
+.cache/
