@@ -29,7 +29,7 @@ oak_detector:
 
     # ── 필터 ─────────────────────────────────────
     person_only:  true        # COCO class 0(person)만 통과
-    conf_thresh:  0.5         # NN단 신뢰도 임계값 (setConfidenceThreshold)
+    conf_thresh:  0.3         # NN단 신뢰도(낮춰서 ByteTrack 2차 저신뢰 복구 매칭 살림; 오검출 늘면 올릴 것)
 
     # ── Spatial(depth) ───────────────────────────
     depth_lower_mm: 100       # 스테레오 근거리 한계 부근 (mm)

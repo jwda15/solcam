@@ -113,6 +113,7 @@ class PhoneBridge(Node):
         self._last_v4l2_reset = 0.0
         self._v4l2_reset_interval = 15.0     # v4l2 리로드 최소 간격 s
         self._wedge_warned = False
+        self._zoom_warned = False
         self._cap_lock = threading.RLock()   # cv2.VideoCapture 는 thread-unsafe →
         # 캡처 스레드의 read/open 과 워치독/health 스레드의 release 를 직렬화(케이블 플랩 시 세그폴트 방지)
 
@@ -175,7 +176,7 @@ class PhoneBridge(Node):
         sc_dir = os.path.dirname(self.scrcpy_bin)
         if sc_dir:
             env["PATH"] = sc_dir + os.pathsep + env.get("PATH", "")
-        env.setdefault("XDG_RUNTIME_DIR", "/run/user/1000")
+        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
         try:
             self.scrcpy_proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -349,6 +350,7 @@ class PhoneBridge(Node):
                 continue
             self._read_fail = 0
             self._last_good_frame = time.time()
+            self._wedge_warned = False
             self.pub_img.publish(self._to_image_msg(frame))
             time.sleep(period)
 
@@ -441,6 +443,13 @@ class PhoneBridge(Node):
     def _bump_zoom(self, delta):
         """줌 목표만 갱신(클램프). 실제 적용(scrcpy 재기동)은 _tick_zoom 이
         입력이 멈춘 뒤 한 번만 → 꾹 누르는 동안 깜빡임 없이 램프."""
+        if not self.manage_scrcpy:   # _tick_zoom 이 managed 일 때만 돌아 적용됨
+            if not self._zoom_warned:
+                self.get_logger().warn(
+                    "줌은 manage_scrcpy:=true 에서만 적용됨(scrcpy 재기동 방식). "
+                    "solcam.sh run 으로 띄우세요.")
+                self._zoom_warned = True
+            return
         tgt = max(self.zoom_min, min(self.zoom_max, self.zoom_target + delta))
         self.zoom_target = round(tgt, 2)
         self._last_zoom_cmd = time.time()

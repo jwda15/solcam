@@ -825,3 +825,43 @@
    * fake_odom.py       : 원점 정지 /odom + /top_yaw_state=0 발행(20Hz). 펌웨어 없이 FOLLOW engage용(상단yaw 검증 전용).
    * fake_owner.py      : /owner_pose 의 azimuth 를 0->+0.3->0->-0.3->0 스윕. 카메라 없이 상단yaw 로직 입증용.
  - 튜닝(게인/부호/포화 등)은 다음 단계. 이번엔 "값이 정상적으로 나온다"까지만 확인.
+
+----------------------------------------------------------------------------
+ 0607(2) 전반 리뷰 후 수정 (윈도우, 서브시스템 3개 병렬 리뷰 + 직접 검증)
+----------------------------------------------------------------------------
+[적용 — 안전 견고성]
+ - gesture_node._to_bgr: reshape 예외처리 추가. 깨진 Image 한 장에 콜백이
+   죽어 spin 종료 → 메뉴 중이면 /gesture_active=true 로 로봇이 영구정지하던
+   잠재 버그 차단(ui_node._decode 와 동일하게).
+ - menu.py: MENU 타임아웃을 "유효 손동작일 때만" 리셋(cur/valid 먼저 계산).
+   메뉴와 무관한 손동작을 들고 있어도 10초 자동닫힘 → 로봇 무한 일시정지 방지.
+   (test_menu 12건 통과)
+ - phone_bridge: XDG_RUNTIME_DIR 를 os.getuid() 기반으로(uid 1000 하드코딩 제거),
+   정상 프레임 복구 시 _wedge_warned 리셋, 줌은 manage_scrcpy=false 면 1회
+   경고 후 무시(_tick_zoom 미가동이라 적용 안 되는데 UI만 바뀌던 혼선 제거).
+ - CMakeLists(control): fake_odom/fake_owner/control_monitor 도 설치(ros2 run 가능).
+
+[적용 — 인지(perception)]
+ - oak_detector: 유효 depth 없으면(z<=0 sentinel) 검출을 추적기에 넣지 않음.
+   z=0 을 칼만 측정값으로 먹어 주인 위치/Mahalanobis 매칭이 오염되던 것 차단
+   (가림 구간은 트래커 Lost 외삽에 맡김).
+ - oak_params: conf_thresh 0.5→0.3. NN단이 0.5로 거르면 ByteTrack 2차(저신뢰
+   복구) 매칭이 항상 비어 죽어있었음 → 낮춰서 복구 매칭 가동. ★실기 튜닝값:
+   오검출 늘면 다시 올릴 것.
+
+[적용 — 제어]
+ - control_node: owner_obs.is_detected 를 ownerTimedOut() 으로 게이팅 → /owner_pose
+   끊기면 상단yaw 가 stale azimuth 추적/추정 오염하던 것 방지.
+ - control_node: /odom·/top_yaw_state·/proximity 구독을 SensorDataQoS(best_effort)
+   로(커맨드 토픽은 reliable 유지). best-effort 센서 드라이버와 미연결 방지.
+ - obstacle_field.hpp: 주석을 실제 구현(정렬도 가중 벡터감속)에 맞춤(동작 불변).
+ - g++ 시뮬 T1~T13 ALL PASS 재확인.
+
+[보류 — 우분투에서 컴파일+실기 검증 필요(★다음 세션)]
+ - 추적기 C++ (실기 튜닝 동반): Lost 진입 시 vz(및 vx,vy) 감쇠로 가림 중
+   "확신에 찬 오이동" 억제 / Lost 트랙은 Mahalanobis 게이트 더 좁게(공분산
+   팽창으로 ID 스왑 위험) / EMA 를 주인 교체 시 reseed(현재 ema_track_id_
+   미사용) / 주인 재획득에 depth 포함(현재 2D 픽셀만).
+ - oak_detector intrinsic 을 FOV 근사 대신 device.readCalibration() 실측으로
+   (azimuth/distance 체계 편향 제거; 실패 시 현재 근사 폴백).
+ - obstacle_field 성분분해식 "측면 흘리기" 회피(6 근접센서 실장 후).

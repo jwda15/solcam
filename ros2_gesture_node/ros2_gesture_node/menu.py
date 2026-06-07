@@ -140,14 +140,14 @@ class MenuStateMachine:
             self._update_hold(gesture if gesture == TRIGGER else None, t,
                               self.trigger_hold, lambda: self._open(t, ev))
         else:  # MENU
-            if gesture is not None:
+            cur = self.path[-1]
+            valid = gesture if (gesture == BACK or
+                                (gesture in SELECT_KEYS and cur.children and gesture in cur.children)) else None
+            if valid is not None:           # 메뉴와 무관한 손동작은 타임아웃 리셋 안 함
                 self._touch_activity(t)
             if t - self._last_activity > self.menu_timeout:
                 self._close("timeout", ev)
                 return ev
-            cur = self.path[-1]
-            valid = gesture if (gesture == BACK or
-                                (gesture in SELECT_KEYS and cur.children and gesture in cur.children)) else None
             # 연속(jog) 중이면 짧은 주기로, 아니면 select_hold(1.5s)로 발동 판정
             need = (self.repeat_interval
                     if (self._repeating and valid is not None and valid == self._cand)

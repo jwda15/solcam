@@ -124,7 +124,10 @@ class GestureNode(Node):
         if msg.encoding not in ("bgr8", "rgb8"):
             return None
         buf = np.frombuffer(msg.data, dtype=np.uint8)
-        frame = buf.reshape(msg.height, msg.step // 3, 3)[:, :msg.width, :]
+        try:
+            frame = buf.reshape(msg.height, msg.step // 3, 3)[:, :msg.width, :]
+        except ValueError:
+            return None   # 깨진/이상한 프레임 → 콜백 크래시(=spin 종료) 방지
         if msg.encoding == "rgb8":
             frame = frame[:, :, ::-1]
         return frame

@@ -140,8 +140,11 @@ class OakDetector(Node):
             if w <= 1.0 or h <= 1.0:
                 continue
             depth_mm = float(d.spatialCoordinates.z)
-            if depth_mm < 0.0:
-                depth_mm = 0.0
+            # 유효 depth 없으면(스테레오 미검출 sentinel z=0) 추적기에 넣지 않는다.
+            #  z=0 을 칼만 측정값으로 먹으면 주인 위치/매칭(Mahalanobis)이 오염되므로,
+            #  차라리 이 프레임은 빼고 트래커의 Lost 외삽에 맡긴다.
+            if depth_mm <= 0.0:
+                continue
             det = Detection()
             det.x = float(x1); det.y = float(y1)
             det.w = float(w);  det.h = float(h)

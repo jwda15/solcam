@@ -52,11 +52,11 @@ ControlNode::ControlNode()
   owner_sub_ = this->create_subscription<ros2_tracking_node::msg::OwnerPose>(
     "/owner_pose", 10, std::bind(&ControlNode::ownerCallback, this, _1));
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    "/odom", 10, std::bind(&ControlNode::odomCallback, this, _1));
+    "/odom", rclcpp::SensorDataQoS(), std::bind(&ControlNode::odomCallback, this, _1));
   teleop_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
     "/teleop_cmd", 10, std::bind(&ControlNode::teleopCallback, this, _1));
   top_yaw_sub_ = this->create_subscription<std_msgs::msg::Float32>(
-    "/top_yaw_state", 10, std::bind(&ControlNode::topYawCallback, this, _1));
+    "/top_yaw_state", rclcpp::SensorDataQoS(), std::bind(&ControlNode::topYawCallback, this, _1));
   mode_sub_ = this->create_subscription<std_msgs::msg::Int32>(
     "/control_mode", 10, std::bind(&ControlNode::modeCallback, this, _1));
   gesture_sub_ = this->create_subscription<std_msgs::msg::Bool>(
@@ -65,7 +65,7 @@ ControlNode::ControlNode()
   adjust_sub_ = this->create_subscription<AdjustCmd>(
     "/adjust_cmd", 10, std::bind(&ControlNode::adjustCallback, this, _1));
   proximity_sub_ = this->create_subscription<ros2_control_node::msg::ProximityArray>(
-    "/proximity", 10, std::bind(&ControlNode::proximityCallback, this, _1));
+    "/proximity", rclcpp::SensorDataQoS(), std::bind(&ControlNode::proximityCallback, this, _1));
 
   // ----- 고정주기 제어 타이머 -----
   auto period = std::chrono::duration<double>(1.0 / node_params_.ctrl_rate);
@@ -342,6 +342,9 @@ void ControlNode::controlStep()
   //    회전량만큼 azimuth 를 전진시켜 "지금" 값으로 근사.
   //    azimuth_now ≈ azimuth_cam + (wz_body + wz_top) × latency
   OwnerState owner_obs = owner_;
+  // /owner_pose 끊기면 미탐지로 강등 → 상단yaw가 stale azimuth 를 계속 추적하거나
+  //  추정이 오염되는 것을 막는다(몸체는 owner_global_valid 로 이미 정지).
+  owner_obs.is_detected = owner_.is_detected && !ownerTimedOut();
   if (node_params_.camera_latency > 0.0 && owner_obs.is_detected) {
     owner_obs.azimuth = wrapAngle(
       owner_obs.azimuth +
