@@ -49,13 +49,13 @@ class Hud:
 
     def draw(self, scr, snapshot, *, mode=0, battery=None,
              recording=False, rec_start=0.0, frame=None,
-             oak_frame=None, split=False):
+             oak_frame=None, split=False, zoom=1.0):
         w, h = scr.get_size()
         self._detect_confirm(snapshot)
         self._draw_video(scr, w, h, frame, oak_frame, split)
         self._draw_topbar(scr, w, mode, battery, recording, rec_start)
         if snapshot.get("state") == "MENU":
-            self._draw_dock(scr, w, h, snapshot, recording)
+            self._draw_dock(scr, w, h, snapshot, recording, zoom)
         else:
             self._hint(scr, w, h, "thumbs-up to open")
             # 따봉 게이지
@@ -160,7 +160,7 @@ class Hud:
         pg.draw.rect(scr, ACCENT, (x, y, int(bw * min(1.0, frac)), bh), border_radius=3)
 
     # ----- 하단 메뉴 독 -----
-    def _draw_dock(self, scr, w, h, snap, recording=False):
+    def _draw_dock(self, scr, w, h, snap, recording=False, zoom=1.0):
         pg = self.pg
         items = snap.get("items", [])
         if not items:
@@ -172,6 +172,7 @@ class Hud:
         hold_g = snap.get("hold_gesture", "")
         prog = float(snap.get("hold_progress", 0.0))
         repeating = bool(snap.get("repeating", False))
+        oak_on = bool(snap.get("ui_flags", {}).get("oak_view", False))   # OAK view(이분할) 토글 상태
         self._last_rects = {}
         for i, it in enumerate(items):
             rect = pg.Rect(x0 + i * (cw + gap), y0, cw, ch)
@@ -181,6 +182,9 @@ class Hud:
             if it["label"] == "Rec":   # 녹화 토글: 상태에 따라 ON/OFF 표시
                 disp = {"gesture": it["gesture"],
                         "label": "Rec OFF" if recording else "Rec ON"}
+            elif it["label"] == "OAK view":   # 이분할(OAK) 토글: 상태에 따라 ON/OFF 표시
+                disp = {"gesture": it["gesture"],
+                        "label": "OAK OFF" if oak_on else "OAK ON"}
             if active and repeating:
                 self._panel(scr, rect, (255, 255, 255), 245)       # 연속=흰 카드
                 self._card_text(scr, rect, disp, INK, INK)
@@ -190,6 +194,8 @@ class Hud:
                 if active:
                     self._border_fill_lr(scr, rect, prog, FILL, 255, 3)  # 파랑 좌→우
                 self._card_text(scr, rect, disp, WHITE if active else DIM, WHITE)
+            if active and it["label"].startswith("Zoom"):
+                self._zoom_badge(scr, rect, zoom)   # 손 떼면 적용될 목표 배율(xN)
         # 거꾸로 따봉(back) 게이지 — 카드 위 중앙
         if hold_g == "dislike":
             self._gauge(scr, w // 2, y0 - 16, prog)
@@ -225,6 +231,19 @@ class Hud:
         cy = rect.y + (rect.h - num.get_height()) // 2
         scr.blit(num, (cx, cy))
         scr.blit(label, (cx + num.get_width() + 7, cy))
+
+    def _zoom_badge(self, scr, rect, zoom):
+        """활성 Zoom 카드 위에 '손 떼면 적용될' 목표 배율(xN)을 작은 파란 알약으로 표시."""
+        pg = self.pg
+        s = self.f_small.render(f"x{zoom:.1f}", True, WHITE)
+        pad = 8
+        bw, bh = s.get_width() + pad * 2, s.get_height() + 4
+        bx = rect.x + (rect.w - bw) // 2
+        by = rect.y - bh - 4
+        bgs = pg.Surface((bw, bh), pg.SRCALPHA)
+        pg.draw.rect(bgs, (*ACCENT, 220), bgs.get_rect(), border_radius=8)
+        scr.blit(bgs, (bx, by))
+        scr.blit(s, (bx + pad, by + 2))
 
     def _hint(self, scr, w, h, text):
         s = self.f_small.render(text, True, HINT)

@@ -20,7 +20,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from std_msgs.msg import Bool, Int32, String
+from std_msgs.msg import Bool, Int32, String, Float32
 from sensor_msgs.msg import Image, BatteryState
 
 
@@ -41,11 +41,13 @@ class UiNode(Node):
         self.rec_start = 0.0
         self.phone_frame = None    # /phone/image (촬영 카메라)
         self.oak_frame = None      # /oak/rgb/image_raw (손동작 인식 카메라)
+        self.phone_zoom = 1.0      # /phone/zoom (현재/목표 줌 배율)
 
         self.create_subscription(String, "/gesture_ui", self._ui_cb, 10)
         self.create_subscription(Int32, "/control_mode", self._mode_cb, 10)
         self.create_subscription(BatteryState, "/phone/battery", self._batt_cb, 10)
         self.create_subscription(Bool, "/phone/recording", self._rec_cb, 10)
+        self.create_subscription(Float32, "/phone/zoom", self._zoom_cb, 10)
         self.create_subscription(
             Image, str(self.get_parameter("video_topic").value), self._phone_img_cb,
             qos_profile_sensor_data)
@@ -91,6 +93,9 @@ class UiNode(Node):
             self.rec_start = time.time()
         self.recording = bool(msg.data)
 
+    def _zoom_cb(self, msg):
+        self.phone_zoom = float(msg.data)
+
     @staticmethod
     def _decode(msg):
         if msg.encoding not in ("rgb8", "bgr8"):
@@ -133,7 +138,7 @@ class UiNode(Node):
         self.hud.draw(self.screen, self.snap, mode=self.mode, battery=self.battery,
                       recording=self.recording, rec_start=self.rec_start,
                       frame=(self.phone_frame if split else bg),
-                      oak_frame=self.oak_frame, split=split)
+                      oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
         pg.display.flip()
 
     def _render_console(self):

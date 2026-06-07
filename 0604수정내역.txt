@@ -782,3 +782,26 @@
      USB2/3 판단 금물(depthai 부팅 후 SuperSpeed 재협상). 판단은 "안정적으로 도느냐"로.
 
  - 시작/종료(요약): solcam run / solcam stop / solcam status / solcam clean(꼬였을 때).
+
+
+ ============================================================
+ [0607-3 프론트엔드 — OAK view 토글 / 폰 줌 / Focus 삭제 (이 항목이 최신)]
+ ============================================================
+ - OAK view: stay=True 제거(단발 ON/OFF 토글). 메뉴 밖에서도 oak_view 유지되어
+   이분할 지속(ui_node split=(MENU) or oak_view). hud: OAK view 카드를 REC식
+   "OAK ON/OFF"로 표시(snap.ui_flags.oak_view 사용).
+ - 폰 줌 구현(scrcpy 4.0 --camera-zoom): phone_bridge 가 zoom_in/out 으로 목표배율만
+   올리고(zoom_step 0.25, 1.0~8.0 클램프, scrcpy가 카메라 실제범위로 재클램프),
+   입력 멈춘 뒤 zoom_apply_delay(0.4s) 지나면 scrcpy 를 새 --camera-zoom 으로 1회
+   재기동(_tick_zoom 디바운스). /dev/video2 자체가 줌되어 프리뷰+녹화 모두 반영.
+   ★재기동 비용 ~3~4s(강제종료 금지 → graceful 대기). 미세 점진 실시간 줌 아님.
+   * Zoom 카드는 stay=True(꾹=목표 램프), 손 떼면 적용.
+   * /phone/zoom(Float32) 발행 → ui_node 구독 → hud 가 활성 Zoom 카드 위에 'x2.0' 등
+     목표배율을 작은 파란 알약으로 표시(_zoom_badge).
+   * scrcpy 헤드리스(--no-window)라 동적 MOD+↑/↓ 단축키 불가 → 재기동 방식 채택.
+     (실시간 매끄러운 줌 원하면 창+xdotool 키주입 필요 — 미채택)
+ - Focus 카드 삭제: scrcpy 가 포커스 제어 미지원(줌/토치만). Phone 하위 = Zoom +/- 만.
+   phone_bridge 의 focus 처리도 제거.
+ - REC=/phone_cmd "record_toggle"(실동작), Power off=/system_cmd "shutdown"(값만,
+   구독자 미연결) 재확인.
+ - 검증: menu 단위테스트 12 통과, 실기에서 OAK view 토글/이분할 유지·줌 배지·줌 적용 확인.

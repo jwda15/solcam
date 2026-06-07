@@ -89,12 +89,11 @@ def build_menu(p: dict) -> MenuNode:
                                                     {"param": "LIFT_HEIGHT", "value": -p["lift_step"], "delta": True}, stay=True)),
         }),
         "four": MenuNode("Other", children={
-            "one": MenuNode("Phone", children={      # 폰 연동은 자리만 (/phone_cmd)
+            "one": MenuNode("Phone", children={      # 폰 카메라: 줌(scrcpy --camera-zoom)
                 "one":   MenuNode("Zoom +", action=Action("phone", "Zoom +", {"cmd": "zoom_in"},  stay=True)),
                 "two":   MenuNode("Zoom -", action=Action("phone", "Zoom -", {"cmd": "zoom_out"}, stay=True)),
-                "three": MenuNode("Focus",  action=Action("phone", "Focus",  {"cmd": "focus"})),
             }),
-            "two":   MenuNode("OAK view",  action=Action("ui", "OAK view", {"toggle": "oak_view"}, stay=True)),
+            "two":   MenuNode("OAK view",  action=Action("ui", "OAK view", {"toggle": "oak_view"})),  # 단발 ON/OFF 토글(REC식)
             "three": MenuNode("Power off", action=Action("system", "Power off", {"cmd": "shutdown"})),  # 자리만 (/system_cmd)
             "four":  MenuNode("Rec", action=Action("phone", "Rec", {"cmd": "record_toggle"})),  # 폰 촬영 시작/종료 토글 (/phone_cmd)
         }),

@@ -37,7 +37,7 @@ from typing import Optional
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, Float32
 from sensor_msgs.msg import Image, BatteryState
 
 from .util import parse_battery_level
@@ -63,6 +63,11 @@ class PhoneBridge(Node):
         self.declare_parameter("scrcpy_watchdog", True)        # 죽으면 자동 재기동
         self.declare_parameter("v4l2_reset_cmd", "")           # 꼬임 자동복구 명령(예: sudo .../reset_v4l2.sh 2)
         self.declare_parameter("wedge_timeout", 10.0)          # s, scrcpy 생존+프레임없음 N초 → 장치 꼬임 판정
+        self.declare_parameter("camera_zoom", 1.0)             # 시작 줌 배율(scrcpy --camera-zoom)
+        self.declare_parameter("zoom_step", 0.25)              # 줌 1스텝 폭
+        self.declare_parameter("zoom_min", 1.0)
+        self.declare_parameter("zoom_max", 8.0)                # scrcpy 가 카메라 실제 범위로 클램프
+        self.declare_parameter("zoom_apply_delay", 0.4)        # s, 줌 입력 멈춘 뒤 scrcpy 재기동까지(디바운스)
 
         gp = self.get_parameter
         self.mock = bool(gp("mock").value)
@@ -81,6 +86,13 @@ class PhoneBridge(Node):
         self.scrcpy_watchdog = bool(gp("scrcpy_watchdog").value)
         self.v4l2_reset_cmd = str(gp("v4l2_reset_cmd").value)
         self.wedge_timeout = float(gp("wedge_timeout").value)
+        self.zoom = float(gp("camera_zoom").value)            # 현재 적용된 줌
+        self.zoom_target = self.zoom                          # 디바운스 목표 줌
+        self.zoom_step = float(gp("zoom_step").value)
+        self.zoom_min = float(gp("zoom_min").value)
+        self.zoom_max = float(gp("zoom_max").value)
+        self.zoom_apply_delay = float(gp("zoom_apply_delay").value)
+        self._last_zoom_cmd = 0.0
 
         # ---- 상태 ----
         self.cap = None                 # cv2.VideoCapture
@@ -108,6 +120,7 @@ class PhoneBridge(Node):
         self.pub_img = self.create_publisher(Image, "/phone/image", 1)
         self.pub_batt = self.create_publisher(BatteryState, "/phone/battery", 10)
         self.pub_rec = self.create_publisher(Bool, "/phone/recording", 10)
+        self.pub_zoom = self.create_publisher(Float32, "/phone/zoom", 10)   # 현재/목표 줌 배율(UI 표시용)
         self.create_subscription(String, "/phone_cmd", self._cmd_cb, 10)
 
         # ---- 영상 소스 준비 ----
@@ -130,8 +143,10 @@ class PhoneBridge(Node):
             self.create_timer(2.0, self._tick_scrcpy_watchdog)  # scrcpy 생존 감시
         if not self.mock and self.manage_scrcpy:
             self.create_timer(3.0, self._tick_health)  # 장치 꼬임 감지→자동 리로드
+            self.create_timer(0.2, self._tick_zoom)    # 줌 디바운스 적용(입력 멈추면 scrcpy 1회 재기동)
         self._tick_battery()  # 시작 즉시 1회
         self._publish_recording()  # 초기 false 알림
+        self.pub_zoom.publish(Float32(data=float(self.zoom)))  # 초기 줌 알림
 
         mode = "MOCK" if self.mock else f"v4l2={self.video_device}"
         self.get_logger().info(f"phone_bridge 시작 ({mode})")
@@ -148,6 +163,7 @@ class PhoneBridge(Node):
         cmd = [self.scrcpy_bin, "--video-source=camera",
                f"--camera-facing={self.camera_facing}",
                f"--camera-size={self.camera_size}",
+               f"--camera-zoom={self.zoom:.2f}",   # scrcpy v4.0+ 센서 줌(범위 밖은 scrcpy가 클램프)
                f"--v4l2-sink={self.video_device}",
                "--no-audio", "--no-window", "--no-playback"]
         if self.adb_serial:
@@ -414,10 +430,31 @@ class PhoneBridge(Node):
         cmd = msg.data.strip()
         if cmd == "record_toggle":
             self._toggle_record()
-        elif cmd in ("zoom_in", "zoom_out", "focus"):
-            self.get_logger().info(f"[TODO] 폰 카메라 {cmd} — 추후 구현(자리만)")
+        elif cmd == "zoom_in":
+            self._bump_zoom(+self.zoom_step)
+        elif cmd == "zoom_out":
+            self._bump_zoom(-self.zoom_step)
         else:
             self.get_logger().warn(f"알 수 없는 phone_cmd: {cmd}")
+
+    # ================= 줌 (scrcpy --camera-zoom 재기동, 디바운스) =================
+    def _bump_zoom(self, delta):
+        """줌 목표만 갱신(클램프). 실제 적용(scrcpy 재기동)은 _tick_zoom 이
+        입력이 멈춘 뒤 한 번만 → 꾹 누르는 동안 깜빡임 없이 램프."""
+        tgt = max(self.zoom_min, min(self.zoom_max, self.zoom_target + delta))
+        self.zoom_target = round(tgt, 2)
+        self._last_zoom_cmd = time.time()
+        self.pub_zoom.publish(Float32(data=float(self.zoom_target)))   # UI에 목표 배율 실시간 표시
+
+    def _tick_zoom(self):
+        if abs(self.zoom_target - self.zoom) < 1e-3:
+            return
+        if time.time() - self._last_zoom_cmd < self.zoom_apply_delay:
+            return  # 아직 입력 중 — 멈출 때까지 대기(디바운스)
+        self.zoom = self.zoom_target
+        self.get_logger().info(f"줌 {self.zoom:.2f}x 적용 → scrcpy 재기동")
+        self._release_cap()
+        self._start_scrcpy()   # 새 --camera-zoom 으로 재기동(_kill_scrcpy 내부 호출)
 
     def _publish_recording(self):
         self.pub_rec.publish(Bool(data=self.recording))
