@@ -31,23 +31,36 @@ RESET_SECURE=/usr/local/sbin/solcam_reset_v4l2.sh
 if [ -x "$RESET_SECURE" ]; then RESET="$RESET_SECURE"; else RESET="$REPO/scripts/reset_v4l2.sh"; fi
 RESET_CMD="sudo $RESET $VIDEO_NR"     # phone_bridge 자동복구 명령(sudoers NOPASSWD 권장)
 
-NODES=(phone_bridge gesture_node ui_node control_node oak_detector)
+NODES=(phone_bridge gesture_node ui_node control_node oak_detector tracking_node oak_viz oak_tracking.launch gesture.launch)
 
-src() { source "$ROS_SETUP"; [ -f "$WS/install/setup.bash" ] && source "$WS/install/setup.bash"; }
+src() { set +u; source "$ROS_SETUP"; [ -f "$WS/install/setup.bash" ] && source "$WS/install/setup.bash"; set -u; }  # ROS setup.bash 는 set -u 비안전 → 소싱 동안만 해제
 
 stop() {
-  echo "[stop] 노드 graceful 종료(SIGINT)..."
+  echo "[stop] 노드 graceful 종료(SIGINT→SIGTERM)..."
   for n in "${NODES[@]}"; do pkill -INT -f "$n" 2>/dev/null; done
   sleep 3
-  for n in "${NODES[@]}"; do pkill -INT -f "$n" 2>/dev/null; done
-  pkill -TERM -f "v4l2-sink=${VIDEO_DEV}" 2>/dev/null    # scrcpy 는 SIGTERM(절대 -9 금지)
+  for n in "${NODES[@]}"; do pkill -TERM -f "$n" 2>/dev/null; done   # SIGINT 무시한 잔존(GUI 등)
+  sleep 2
+  # graceful 끝까지 무시하는 잔존(pygame ui_node 등) → 최후수단 SIGKILL, 직후 shm 청소로 꼬임 차단
+  local forced=0
+  for n in "${NODES[@]}"; do
+    if pgrep -f "$n" >/dev/null 2>&1; then pkill -KILL -f "$n" 2>/dev/null; forced=1; fi
+  done
+  pkill -TERM -f "v4l2-sink=${VIDEO_DEV}" 2>/dev/null    # scrcpy 는 SIGTERM(절대 -9 금지: /dev/video 잠김)
   "$ADB_BIN" shell pkill -f com.genymobile.scrcpy 2>/dev/null || true
+  if [ "$forced" = 1 ]; then
+    sleep 1; ros2 daemon stop 2>/dev/null || true
+    rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
+    echo "[stop] (graceful 무시한 잔존 강제종료 + shm 청소 완료)"
+  fi
   sleep 1; echo "[stop] 완료."
 }
 
 clean() {
-  echo "[clean] 1) 노드 graceful 종료"
+  echo "[clean] 1) 노드 graceful 종료(SIGINT→SIGTERM)"
   for n in "${NODES[@]}"; do pkill -INT -f "$n" 2>/dev/null; done; sleep 3
+  for n in "${NODES[@]}"; do pkill -TERM -f "$n" 2>/dev/null; done; sleep 2
+  for n in "${NODES[@]}"; do pkill -KILL -f "$n" 2>/dev/null; done   # 잔존 강제(2단계서 shm 청소함)
   pkill -TERM -f "v4l2-sink=${VIDEO_DEV}" 2>/dev/null
   "$ADB_BIN" shell pkill -f com.genymobile.scrcpy 2>/dev/null || true; sleep 1
   echo "[clean] 2) ROS2 daemon + DDS shm 잔여 제거(검은화면 원인)"
@@ -74,9 +87,11 @@ run() {
   echo "[run] 1) OAK 검출+추적 ($LOG/oak.log)"
   ( cd "$REPO" && ros2 launch ros2_yolo_oak oak_tracking.launch.py viz:=false ) >"$LOG/oak.log" 2>&1 &
   sleep 6
-  echo "[run] 2) gesture_node (입력=/phone/image, $LOG/gesture.log)"
+  echo "[run] 2) gesture_node (입력=OAK /oak/rgb/image_raw, $LOG/gesture.log)"
   ros2 launch ros2_gesture_node gesture.launch.py ui:=false \
-       image_topic:=/phone/image >"$LOG/gesture.log" 2>&1 &
+       image_topic:=/oak/rgb/image_raw \
+       model_path:="$REPO/ros2_gesture_node/models/YOLOv10n_gestures.pt" \
+       >"$LOG/gesture.log" 2>&1 &
   sleep 3
   echo "[run] 3) phone_bridge (managed scrcpy + 자동복구, $LOG/phone.log)"
   ros2 run ros2_phone_bridge phone_bridge --ros-args \

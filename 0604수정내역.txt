@@ -732,3 +732,53 @@
    효과: 정상 운영(케이블 살짝 흔들림/scrcpy 죽음)은 워치독+자동리로드로 복구,
      급단절로 모듈이 꼬여도 sudoers 설정 시 무인 복구. 검은화면(DDS)은 solcam.sh
      clean(shm 정리)로 해결. ★두 증상 모두 kill -9 미사용 + 이 경로로 차단.
+
+
+ ============================================================
+ [0607 우분투 실기 — 풀스택 브링업 성공 + 신뢰성 수정 (이 세션이 최신)]
+ ============================================================
+ 검증(✅): solcam run 으로 5노드(oak_detector/tracking_node/gesture_node/
+   gesture_ui_node/phone_bridge) 전부 기동. OAK 안정(tracking hit 93%), gesture 가
+   OAK RGB 에서 손동작 인식, /oak/rgb/image_raw 19Hz, 명령토픽(/control_mode·
+   /adjust_cmd·/gesture_active·/gesture_ui) 전부 존재. solcam stop 으로 ui_node 포함
+   깨끗이 종료 + /dev/shm fastrtps 0 확인.
+
+ - ★손동작 인식 입력 = OAK RGB(/oak/rgb/image_raw) 로 정정 (폰은 촬영/녹화 전용):
+   * solcam.sh 가 gesture 를 image_topic:=/phone/image 로 덮어쓰던 것 제거 →
+     image_topic:=/oak/rgb/image_raw. (/phone/image 재사용은 OAK 없을 때만의 임시검증)
+   * gesture.launch.py: model_path 런치인자 추가(기본 상대경로). solcam.sh 가
+     model_path:="$REPO/ros2_gesture_node/models/YOLOv10n_gestures.pt"(절대) 전달.
+     → gesture_node 가 더는 "모델 없음(상대경로 cwd)" 로 죽지 않음. 머신별 경로는
+     $SOLCAM_REPO(.bashrc)로 들어가 커밋 파일엔 안 박힘.
+
+ - phone_bridge 세그폴트 수정(케이블 플랩 시 [ros2run] Segmentation fault):
+   * 원인 = cv2.VideoCapture(thread-unsafe)를 캡처스레드 read 와 워치독/health
+     스레드 release 가 동시 접근하는 race. (보호코드=scrcpy 워치독은 정상 작동했음)
+   * 수정 = self._cap_lock(RLock). _capture_loop read/_try_reopen, _release_cap 을
+     락으로 직렬화 → read 중 release 충돌 차단.
+
+ - solcam.sh 버그/신뢰성 수정:
+   * src(): set +u 로 감싸 ROS setup.bash 소싱(AMENT_TRACE_SETUP_FILES unbound 로
+     status/run 이 즉사하던 것 수정). ★이게 "내가 터미널서 run 해도 노드 안 뜸"의 원인.
+   * NODES 에 tracking_node, oak_viz, oak_tracking.launch, gesture.launch 추가
+     (기존엔 tracking_node 누락 + oak launch 미매칭 → stop 이 다 못 죽임).
+   * stop/clean: SIGINT→SIGTERM→(graceful 무시 잔존)SIGKILL + 직후 shm 청소.
+     scrcpy 는 여전히 SIGTERM 만(절대 -9: /dev/video 잠김). -9 는 ros 노드 잔존에만,
+     항상 shm 청소를 동반 → "kill-9 후 미정리" 꼬임은 발생하지 않음.
+
+ - ui_node 종료 수정:
+   * ESC/QUIT 핸들러가 콜백 안에서 rclpy.shutdown() 호출 → 종료 deadlock(프로세스
+     안 죽음)이던 것 제거. _closing 만 세팅, main 루프가 빠져나가 정상 종료.
+   * main(): SIGINT/SIGTERM 핸들러 + spin_once 루프 → solcam stop 에 정상 반응.
+   ★ESC 는 UI 창/노드만 닫음. 나머지 노드는 설계상 계속 돔. 전체 종료는 solcam stop.
+
+ - 운영 환경(이 PC, 홈 우분투22):
+   * NOPASSWD v4l2: /usr/local/sbin/solcam_reset_v4l2.sh(root) + /etc/sudoers.d/solcam.
+     → solcam.sh 가 sudo 비번 없이 v4l2loopback 리로드(RESET_SECURE 자동 인식).
+   * ~/.bashrc: export SOLCAM_REPO/SOLCAM_WS/SCRCPY_DIR/SOLCAM_VIDEO_NR + solcam() 함수.
+     → 어느 터미널서든 solcam run|stop|status|clean 한 줄.
+   * ★OAK-D 는 USB3 포트에 연결할 것. USB2면 "Device has crashed / Input/output error".
+     03e7:2485(MyriadX)는 부팅전 ROM 상태라 항상 USB2 로 잡힘 → lsusb 버스번호로
+     USB2/3 판단 금물(depthai 부팅 후 SuperSpeed 재협상). 판단은 "안정적으로 도느냐"로.
+
+ - 시작/종료(요약): solcam run / solcam stop / solcam status / solcam clean(꼬였을 때).

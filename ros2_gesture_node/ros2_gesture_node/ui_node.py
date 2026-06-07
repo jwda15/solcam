@@ -119,13 +119,12 @@ class UiNode(Node):
             return
         for e in pg.event.get():
             if e.type == pg.QUIT or (e.type == pg.KEYDOWN and e.key == pg.K_ESCAPE):
-                self._closing = True
+                self._closing = True    # main 루프가 _closing 보고 빠져나가 정상 종료
                 try:
                     self.render_timer.cancel()
                 except Exception:
                     pass
                 pg.quit()               # 창 즉시 닫기(WM '응답 없음' 방지)
-                rclpy.shutdown()
                 return
         state = self.snap.get("state")
         oak_view = bool(self.snap.get("ui_flags", {}).get("oak_view", False))
@@ -146,10 +145,22 @@ class UiNode(Node):
 
 
 def main(args=None):
+    import signal
     rclpy.init(args=args)
     node = UiNode()
+    # pygame/SDL 이 SIGINT/SIGTERM 을 가로채 종료가 안 먹는 걸 덮어쓴다
+    # (node 생성=pygame.init 이후에 등록해야 SDL 핸들러를 이긴다). stop 에 항상 정상 종료.
+    _stop = {"v": False}
+    def _sig(*_):
+        _stop["v"] = True
     try:
-        rclpy.spin(node)
+        signal.signal(signal.SIGINT, _sig)
+        signal.signal(signal.SIGTERM, _sig)
+    except Exception:
+        pass
+    try:
+        while rclpy.ok() and not _stop["v"] and not getattr(node, "_closing", False):
+            rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
     finally:

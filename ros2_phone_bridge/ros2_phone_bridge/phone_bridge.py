@@ -101,6 +101,8 @@ class PhoneBridge(Node):
         self._last_v4l2_reset = 0.0
         self._v4l2_reset_interval = 15.0     # v4l2 리로드 최소 간격 s
         self._wedge_warned = False
+        self._cap_lock = threading.RLock()   # cv2.VideoCapture 는 thread-unsafe →
+        # 캡처 스레드의 read/open 과 워치독/health 스레드의 release 를 직렬화(케이블 플랩 시 세그폴트 방지)
 
         # ---- pub/sub ----
         self.pub_img = self.create_publisher(Image, "/phone/image", 1)
@@ -308,15 +310,20 @@ class PhoneBridge(Node):
         read() 가 블로킹돼도 ROS executor(워치독/배터리)는 영향을 받지 않는다."""
         period = 1.0 / max(1.0, self.publish_rate)
         while rclpy.ok() and not self._cap_stop:
-            if self.cap is None:
-                self._try_reopen()          # 포맷 준비됐을 때만 열림(게이트)
+            with self._cap_lock:            # read/open/release 직렬화(thread-unsafe 세그폴트 방지)
                 if self.cap is None:
-                    time.sleep(self._reopen_interval)
-                    continue
-            try:
-                ok, frame = self.cap.read()
-            except Exception:
-                ok, frame = False, None
+                    self._try_reopen()      # 포맷 준비됐을 때만 열림(게이트)
+                opened = self.cap is not None
+                if opened:
+                    try:
+                        ok, frame = self.cap.read()
+                    except Exception:
+                        ok, frame = False, None
+                else:
+                    ok, frame = False, None
+            if not opened:
+                time.sleep(self._reopen_interval)
+                continue
             if not ok or frame is None:
                 self._read_fail += 1
                 if self._read_fail >= self._reopen_after:
@@ -330,12 +337,13 @@ class PhoneBridge(Node):
             time.sleep(period)
 
     def _release_cap(self):
-        if self.cap is not None:
-            try:
-                self.cap.release()
-            except Exception:
-                pass
-            self.cap = None
+        with self._cap_lock:
+            if self.cap is not None:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
+                self.cap = None
 
     def _try_reopen(self):
         """끊긴 v4l2 장치를 다시 연다(포맷 준비 게이트는 _open_capture 안에서)."""
