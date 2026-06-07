@@ -1,0 +1,13 @@
+# solcam: phone_bridge 가 비밀번호 없이 v4l2loopback 만 리로드하도록 허용.
+# (장치 꼬임 자동복구용. 다른 sudo 권한은 일절 주지 않음.)
+#
+# 설치(보안상 스크립트를 root 소유 위치로 복사해 사용):
+#   sudo cp <repo>/scripts/reset_v4l2.sh /usr/local/sbin/solcam_reset_v4l2.sh
+#   sudo chown root:root /usr/local/sbin/solcam_reset_v4l2.sh
+#   sudo chmod 755 /usr/local/sbin/solcam_reset_v4l2.sh
+#   sudo cp <repo>/scripts/solcam.sudoers /etc/sudoers.d/solcam
+#   sudo chmod 440 /etc/sudoers.d/solcam
+#   sudo visudo -c        # 문법 검증
+#
+# 아래 'jw' 를 본인 사용자명으로 바꾸세요. 인자(video_nr)는 * 로 허용.
+jw ALL=(root) NOPASSWD: /usr/local/sbin/solcam_reset_v4l2.sh *

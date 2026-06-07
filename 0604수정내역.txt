@@ -718,3 +718,17 @@
    * stop: scrcpy 포함 graceful 종료(절대 kill -9 금지 — 장치 꼬임).
    ★코드 버그 아님 재확인: ui_node/hud(분할·QoS·종료)·phone_bridge 정상.
      두 증상(폰영상 미표시·내가띄우면 검정)은 kill-9/급단절 후 미정리가 원인.
+
+ - phone_bridge v4l2 장치 꼬임 자동복구 + 안 꼬이는 실행 (0607, 윈도우에서):
+   * _tick_health(3s): scrcpy 살아있는데 wedge_timeout(10s) 넘게 프레임 없고
+     포맷 미준비 → 장치 꼬임으로 판정. v4l2_reset_cmd 설정 시 release→kill_scrcpy
+     →리로드→start_scrcpy 로 자동 복구(쿨다운 15s, 녹화 중엔 보류). 미설정이면
+     수동 리로드 안내를 1회 로그.
+   * 신규 파라미터: v4l2_reset_cmd, wedge_timeout. _last_good_frame 로 프레임 생존 추적.
+   * scripts/reset_v4l2.sh: v4l2loopback 깨끗 리로드(root). scripts/solcam.sudoers:
+     리로드만 NOPASSWD 허용 템플릿(보안상 /usr/local/sbin 복사 사용).
+   * scripts/solcam.sh: run 시작에 v4l2 리로드(매 실행 클린) + phone_bridge 에
+     v4l2_reset_cmd/wedge_timeout 전달. 모든 종료 graceful(절대 kill -9 금지).
+   효과: 정상 운영(케이블 살짝 흔들림/scrcpy 죽음)은 워치독+자동리로드로 복구,
+     급단절로 모듈이 꼬여도 sudoers 설정 시 무인 복구. 검은화면(DDS)은 solcam.sh
+     clean(shm 정리)로 해결. ★두 증상 모두 kill -9 미사용 + 이 경로로 차단.

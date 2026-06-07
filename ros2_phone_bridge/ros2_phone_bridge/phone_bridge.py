@@ -61,6 +61,8 @@ class PhoneBridge(Node):
         self.declare_parameter("camera_size", "1280x720")      # scrcpy 카메라 해상도
         self.declare_parameter("camera_facing", "back")        # front/back
         self.declare_parameter("scrcpy_watchdog", True)        # 죽으면 자동 재기동
+        self.declare_parameter("v4l2_reset_cmd", "")           # 꼬임 자동복구 명령(예: sudo .../reset_v4l2.sh 2)
+        self.declare_parameter("wedge_timeout", 10.0)          # s, scrcpy 생존+프레임없음 N초 → 장치 꼬임 판정
 
         gp = self.get_parameter
         self.mock = bool(gp("mock").value)
@@ -77,6 +79,8 @@ class PhoneBridge(Node):
         self.camera_size = str(gp("camera_size").value)
         self.camera_facing = str(gp("camera_facing").value)
         self.scrcpy_watchdog = bool(gp("scrcpy_watchdog").value)
+        self.v4l2_reset_cmd = str(gp("v4l2_reset_cmd").value)
+        self.wedge_timeout = float(gp("wedge_timeout").value)
 
         # ---- 상태 ----
         self.cap = None                 # cv2.VideoCapture
@@ -93,6 +97,10 @@ class PhoneBridge(Node):
         self._reopen_interval = 1.0   # 재연결 시도 최소 간격 s
         self._last_scrcpy_restart = 0.0
         self._scrcpy_restart_interval = 3.0  # scrcpy 재기동 최소 간격 s
+        self._last_good_frame = time.time()  # 마지막 정상 프레임 시각(꼬임 감지)
+        self._last_v4l2_reset = 0.0
+        self._v4l2_reset_interval = 15.0     # v4l2 리로드 최소 간격 s
+        self._wedge_warned = False
 
         # ---- pub/sub ----
         self.pub_img = self.create_publisher(Image, "/phone/image", 1)
@@ -118,6 +126,8 @@ class PhoneBridge(Node):
         self.create_timer(self.battery_period, self._tick_battery)
         if not self.mock and self.manage_scrcpy and self.scrcpy_watchdog:
             self.create_timer(2.0, self._tick_scrcpy_watchdog)  # scrcpy 생존 감시
+        if not self.mock and self.manage_scrcpy:
+            self.create_timer(3.0, self._tick_health)  # 장치 꼬임 감지→자동 리로드
         self._tick_battery()  # 시작 즉시 1회
         self._publish_recording()  # 초기 false 알림
 
@@ -153,6 +163,7 @@ class PhoneBridge(Node):
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True, env=env)
             self._last_scrcpy_restart = time.time()
+            self._last_good_frame = time.time()   # 재기동 직후 grace
             self.get_logger().info(
                 f"scrcpy 시작(pid={self.scrcpy_proc.pid}, {self.camera_size})")
         except FileNotFoundError:
@@ -215,6 +226,45 @@ class PhoneBridge(Node):
         self._release_cap()   # 블로킹된 read 깨우고, 포맷 재준비 후 캡처 스레드가 재오픈
         self._start_scrcpy()
 
+    def _tick_health(self):
+        """scrcpy는 살아있는데 N초 넘게 프레임이 없으면 v4l2 장치 꼬임으로 보고,
+        v4l2_reset_cmd 가 설정돼 있으면 v4l2loopback 을 리로드해 자동 복구한다.
+        (scrcpy 급단절/케이블 뽑힘 후 /dev/videoN VIDIOC_G_FMT 잠김 대응.)"""
+        if self.recording:
+            return  # 녹화 중엔 ffmpeg도 장치를 잡고 있어 판단 보류
+        if time.time() - self._last_good_frame < self.wedge_timeout:
+            return  # 프레임 정상
+        # scrcpy 가 죽은 거면 scrcpy 워치독이 먼저 살린다
+        if self.scrcpy_proc is None or self.scrcpy_proc.poll() is not None:
+            return
+        if self._device_format_ready():
+            return  # 포맷은 정상 — 프레임만 잠깐 비는 것, 더 기다림
+        # 여기 도달 = scrcpy 살아있는데 포맷 못 잡음 = 장치 꼬임
+        now = time.time()
+        if now - self._last_v4l2_reset < self._v4l2_reset_interval:
+            return
+        if not self.v4l2_reset_cmd:
+            if not self._wedge_warned:
+                self.get_logger().error(
+                    "v4l2 장치 꼬임 감지 — 수동 리로드 필요: "
+                    "sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback "
+                    "video_nr=N card_label=solcam_phone exclusive_caps=1. "
+                    "v4l2_reset_cmd 파라미터를 주면 자동 복구함.")
+                self._wedge_warned = True
+            return
+        self._last_v4l2_reset = now
+        self.get_logger().warn("v4l2 장치 꼬임 → 자동 리로드 시도")
+        self._release_cap()
+        self._kill_scrcpy()       # 모듈이 사용 중이면 리로드 안 되므로 먼저 정리
+        try:
+            subprocess.run(shlex.split(self.v4l2_reset_cmd), timeout=15.0)
+        except Exception as e:
+            self.get_logger().error(f"v4l2 리로드 실패: {e}")
+            return
+        self._last_good_frame = time.time()   # 리로드 후 grace
+        self._start_scrcpy()
+        self.get_logger().info("v4l2 리로드 + scrcpy 재기동 완료")
+
     def _open_capture(self):
         try:
             import cv2
@@ -275,6 +325,7 @@ class PhoneBridge(Node):
                 time.sleep(0.05)
                 continue
             self._read_fail = 0
+            self._last_good_frame = time.time()
             self.pub_img.publish(self._to_image_msg(frame))
             time.sleep(period)
 
