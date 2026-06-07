@@ -709,3 +709,12 @@
  - depthai 캐시 때문에 OAK 런치는 repo 루트에서:
      cd "<repo>" && ros2 launch ros2_yolo_oak oak_tracking.launch.py viz:=false
  - 권장 기동 순서: OAK → gesture_node → phone_bridge(managed) → ui_node.
+
+ - 운영 헬퍼 추가 (0607, 윈도우에서): scripts/solcam.sh {clean|run|stop|status}
+   * clean: 노드 종료 + ros2 daemon stop + /dev/shm/fastrtps_* 제거(DDS 검은화면
+     원인 (A)) + v4l2loopback 리로드(포맷 잠김 (B)) 한 번에.
+   * run: OAK→gesture(입력 /phone/image)→phone_bridge(managed)→ui_node 순서로
+     기동 + /phone/image 첫 프레임 대기 + 로그 분리(/tmp/solcam/*.log).
+   * stop: scrcpy 포함 graceful 종료(절대 kill -9 금지 — 장치 꼬임).
+   ★코드 버그 아님 재확인: ui_node/hud(분할·QoS·종료)·phone_bridge 정상.
+     두 증상(폰영상 미표시·내가띄우면 검정)은 kill-9/급단절 후 미정리가 원인.
