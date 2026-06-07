@@ -805,3 +805,23 @@
  - REC=/phone_cmd "record_toggle"(실동작), Power off=/system_cmd "shutdown"(값만,
    구독자 미연결) 재확인.
  - 검증: menu 단위테스트 12 통과, 실기에서 OAK view 토글/이분할 유지·줌 배지·줌 적용 확인.
+
+ ============================================================
+ [0607-4 control_node 출력 검증(홈PC 벤치) + 검증 헬퍼 추가 (이 항목이 최신)]
+ ============================================================
+ - 목적: control_node 3출력(상단yaw/리프트/몸체)이 실제로 나오는지 홈PC에서 확인.
+   세 출력은 단일 토픽 /control_cmd(ControlCmd.msg, 50Hz)에 다 들어있어 echo 하나로 관찰.
+ - 검증 결과(가짜 입력 주입):
+   * 몸체(IDLE): /teleop_cmd → body_vx 0→0.3 슬루 램프, yaw_rate→0.5, teleop_timeout 후 자동정지. OK
+   * 리프트(IDLE): /adjust_cmd(param=3 LIFT_HEIGHT) → 절대0.25/증분+0.1/0.8은 z_max0.5 클램프, active=1. OK
+   * 상단yaw(FOLLOW): 가짜 owner+odom → top_yaw_target 이 azimuth 적분(우→음/좌→양), w_top_max 0.04/틱 율제한, active=1. OK
+ - ★펌웨어 없는 PC 주의:
+   * /odom 없으면 FOLLOW engage 안 됨 → 상단yaw 검증엔 가짜 /odom 필요(fake_odom.py).
+   * /top_yaw_state 피드백 없으면 top_yaw_target 이 +-top_lead_max(기본1.0rad)에서 포화하고
+     azimuth=0 와도 자동복귀 안 함(적분기). 실락온은 펌웨어 또는 모터 시뮬 필요.
+   * ROS_DOMAIN_ID 주의: 사용자 셸은 bashrc로 30. 노드 띄울 때 도메인 안 맞으면 토픽 안 보임.
+ - 추가한 검증 헬퍼 (ros2_control_node/scripts/, 실행: python3 경로, 미설치):
+   * control_monitor.py : /control_cmd + /control_debug 구독해 한 줄 요약(5Hz, 변화시 '*'). 매 틱값 확인용.
+   * fake_odom.py       : 원점 정지 /odom + /top_yaw_state=0 발행(20Hz). 펌웨어 없이 FOLLOW engage용(상단yaw 검증 전용).
+   * fake_owner.py      : /owner_pose 의 azimuth 를 0->+0.3->0->-0.3->0 스윕. 카메라 없이 상단yaw 로직 입증용.
+ - 튜닝(게인/부호/포화 등)은 다음 단계. 이번엔 "값이 정상적으로 나온다"까지만 확인.
