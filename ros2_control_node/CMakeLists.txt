@@ -67,5 +67,9 @@ install(PROGRAMS scripts/teleop_keyboard.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME teleop_keyboard
 )
+# 개발/검증 헬퍼 (ros2 run ros2_control_node <name>)
+install(PROGRAMS scripts/fake_odom.py       DESTINATION lib/${PROJECT_NAME} RENAME fake_odom)
+install(PROGRAMS scripts/fake_owner.py      DESTINATION lib/${PROJECT_NAME} RENAME fake_owner)
+install(PROGRAMS scripts/control_monitor.py DESTINATION lib/${PROJECT_NAME} RENAME control_monitor)
 
 ament_package()
