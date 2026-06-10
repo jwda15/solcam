@@ -131,7 +131,7 @@ enum class Mode : int
   FOLLOW     = 1,   // 선분(거리+글로벌각) 유지 (구현됨)
   ROTATE     = 2,   // 제자리 회전 추적: 위치 고정, 몸체 yaw만 주인 추종 (구현됨)
   FOLLOW2    = 3,   // leash(줄): 거리만 유지, 구도/odom 불필요 (구현됨)
-  COMPOSE    = 4,   // 구도잡기: 정지 + 리프트 활성 (TODO)
+  ORBIT      = 4,   // 공전: 주인 중심 반지름 유지하며 천천히 돌기 (구현됨)
 };
 
 }  // namespace control_node

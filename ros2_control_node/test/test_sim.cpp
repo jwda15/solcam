@@ -24,6 +24,7 @@
 #include "control_node/follow_controller.hpp"
 #include "control_node/rotate_controller.hpp"
 #include "control_node/follow2_controller.hpp"
+#include "control_node/orbit_controller.hpp"
 #include "control_node/idle_controller.hpp"
 #include "control_node/state_estimator.hpp"
 
@@ -145,6 +146,56 @@ static void test_follow2()
   ControlCommand c5; for(int i=0;i<10;i++) c5=f.step(in2);
   std::snprintf(b,sizeof(b),"미탐지 vx=%.3f vy=%.3f", c5.body_vx, c5.body_vy);
   check(std::abs(c5.body_vx)<1e-6 && std::abs(c5.body_vy)<1e-6, "T14e 미탐지 정지", b);
+}
+
+
+// ---------- T15: 모드4 ORBIT(공전) — 반지름 유지하며 천천히 돌기 ----------
+static void test_orbit()
+{
+  std::printf("\n== 모드4 ORBIT(공전) ==\n");
+  ControllerParams P; double dt = 0.02;
+  OrbitController f; f.configure(P);
+
+  // engage_dist 로 반지름 캡처 후, dist/az 로 정상상태 명령
+  auto run = [&](double engage_dist, double dist, double az, double th){
+    f.reset();
+    OwnerState oe; oe.is_detected=true; oe.distance=engage_dist; oe.azimuth=az;
+    ControlInput ein; ein.owner=oe; ein.theta_head=th; ein.dt=dt; ein.owner_global_valid=false;
+    f.engage(ein);   // radius = engage_dist
+    OwnerState o; o.is_detected=true; o.distance=dist; o.azimuth=az;
+    ControlInput in; in.owner=o; in.theta_head=th; in.dt=dt; in.owner_global_valid=false;
+    ControlCommand c; for(int i=0;i<80;i++) c=f.step(in); return c;
+  };
+  char b[140];
+
+  // 반지름에서(정면): 접선 CCW만 → vy<0(우측), vx≈0, wz=0
+  ControlCommand c1 = run(1.5, 1.5, 0.0, 0.0);
+  std::snprintf(b,sizeof(b),"R=dist=1.5 vx=%.3f vy=%.3f(CCW=-) wz=%.3f", c1.body_vx, c1.body_vy, c1.body_yaw_rate);
+  check(std::abs(c1.body_vx)<0.02 && c1.body_vy<-0.05 && std::abs(c1.body_yaw_rate)<1e-9,
+        "T15a 반지름서 접선공전(CCW)", b);
+
+  // 반지름보다 멈 → 안쪽(+vx) + 접선(-vy)
+  ControlCommand c2 = run(1.5, 2.0, 0.0, 0.0);
+  std::snprintf(b,sizeof(b),"R=1.5 dist=2.0 vx=%.3f(>0 접근) vy=%.3f", c2.body_vx, c2.body_vy);
+  check(c2.body_vx>0.05 && c2.body_vy<-0.02, "T15b 멀면 안쪽+공전", b);
+
+  // 미탐지 → 정지
+  f.reset();
+  OwnerState lost; lost.is_detected=false;
+  ControlInput in2; in2.owner=lost; in2.dt=dt; f.engage(in2);
+  ControlCommand c3; for(int i=0;i<10;i++) c3=f.step(in2);
+  std::snprintf(b,sizeof(b),"미탐지 vx=%.3f vy=%.3f", c3.body_vx, c3.body_vy);
+  check(std::abs(c3.body_vx)<1e-6 && std::abs(c3.body_vy)<1e-6, "T15c 미탐지 정지", b);
+
+  // CW(orbit_ccw=false) → 접선 반대(vy>0)
+  ControllerParams Pcw = P; Pcw.orbit_ccw = false;
+  OrbitController g; g.configure(Pcw);
+  g.reset();
+  OwnerState ow; ow.is_detected=true; ow.distance=1.5; ow.azimuth=0.0;
+  ControlInput in4; in4.owner=ow; in4.dt=dt; in4.owner_global_valid=false; g.engage(in4);
+  ControlCommand c4; for(int i=0;i<80;i++) c4=g.step(in4);
+  std::snprintf(b,sizeof(b),"CW vy=%.3f(>0)", c4.body_vy);
+  check(c4.body_vy>0.05, "T15d CW 방향 반대", b);
 }
 
 int main()
@@ -515,6 +566,7 @@ int main()
   }
 
   test_follow2();
+  test_orbit();
   std::printf("== 결과: %s ==\n", g_fail == 0 ? "ALL PASS" : "FAIL 있음");
   return g_fail;
 }

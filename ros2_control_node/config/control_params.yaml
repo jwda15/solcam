@@ -48,6 +48,11 @@ control_node:
     leash_dead: 0.5         # m, 슬랙(거리+이 값 넘을 때만 끌려감; 가까우면 정지, 후퇴X)
     kp_leash: 0.6           # 거리오차[m] → 속도[m/s] (P)
 
+    # ----- 모드4 ORBIT (공전): 반지름 유지하며 천천히 돌기 -----
+    orbit_speed: 0.15       # m/s, 접선(공전) 속도 — ★천천히
+    orbit_ccw: true         # true=반시계(CCW) 기본
+    kp_orbit_r: 0.5         # 반지름 오차[m] → 반경속도[m/s] (P)
+
     # ----- 리프트 (스텝, 위치) -----
     z_min: 0.0              # m
     z_max: 0.5              # m

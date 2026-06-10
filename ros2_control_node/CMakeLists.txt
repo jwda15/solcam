@@ -34,6 +34,7 @@ add_executable(control_node
   src/follow_controller.cpp   # 모드1(FOLLOW) 선분 유지
   src/rotate_controller.cpp   # 모드2(ROTATE) 제자리 회전 추적
   src/follow2_controller.cpp  # 모드3(FOLLOW2) leash 거리유지
+  src/orbit_controller.cpp    # 모드4(ORBIT) 공전
   src/control_node.cpp        # ROS 노드 (구독/발행/타이머)
   src/main.cpp
 )

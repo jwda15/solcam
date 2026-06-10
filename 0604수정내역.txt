@@ -939,3 +939,21 @@
    leash_dead); over>0 일 때만 +속도.) T14c "가까우면 정지"로 갱신, 전 케이스 PASS.
    ※상단 yaw: FOLLOW/ROTATE/FOLLOW2 모두 동일 trackTopYaw + 동일 파라미터
      (kp_yaw/w_top_max/az_dead/top_lead_max) → 같은 속도로 락온. IDLE만 정지.
+
+----------------------------------------------------------------------------
+ 0607(6) 모드4 ORBIT(공전) 추가 — 주인 중심 반지름 유지하며 천천히 돌기 (윈도우)
+----------------------------------------------------------------------------
+ 개념: 드론 공전샷. 주인 중심 반지름 유지 + 접선 게걸음으로 천천히 회전,
+   상단 yaw 카메라가 주인 락온 → 도는 내내 주인이 화면 중앙. Mode enum 4=ORBIT.
+ 사양(요청 반영):
+  - 기본 반시계(CCW), 천천히(orbit_speed 0.15 m/s).
+  - 반지름 = 모드 진입(선택) 시점의 주인 거리(engage 캡처; 미검출이면 첫 유효
+    프레임에서 캡처). 손동작(SEG_DISTANCE)으로 조정 — 모드1·3과 공유.
+  - 몸체 yaw 제어 없음(wz=0). ★/odom 불필요(requiresOwner=false): 상대값
+    (theta_head-azimuth, distance)만으로 접선/반지름 제어 → 드라이버 전 테스트 가능.
+ 구현: orbit_controller.{hpp,cpp}. 접선 CCW 단위 = (sin dir,-cos dir), 반지름은
+   dir 방향 P(kp_orbit_r). 합성 후 슬루+v_max(발행부 벡터크기 클램프).
+   params/yaml(orbit_speed/orbit_ccw/kp_orbit_r), controllerFor/configure/adjust,
+   CMake 배선. 메뉴 Mode→More→{Follow2, Orbit}(4칸 한계로 묶음), UI 모드명 ORBIT.
+ 검증: g++ T15a~d ALL PASS (반지름서 접선공전 CCW / 멀면 안쪽+공전 / 미탐지 정지
+   / CW 반대방향). menu 12 PASS.

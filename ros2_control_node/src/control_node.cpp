@@ -38,6 +38,7 @@ ControlNode::ControlNode()
   follow_controller_.configure(params_);
   rotate_controller_.configure(params_);
   follow2_controller_.configure(params_);
+  orbit_controller_.configure(params_);
   engaged_ = false;
   obstacle_field_.setThresholds(obstacle_params_.stop_dist,
                                 obstacle_params_.slow_dist);
@@ -281,6 +282,7 @@ void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
     case AdjustCmd::PARAM_SEG_DISTANCE:    // 모드1 선분 거리 D + 모드3 leash 거리
       follow_controller_.setSegDistance(msg->value, msg->delta);
       follow2_controller_.setLeashDistance(msg->value, msg->delta);
+      orbit_controller_.setOrbitRadius(msg->value, msg->delta);
       break;
     case AdjustCmd::PARAM_SEG_ANGLE:       // 모드1: 선분 글로벌각 φ
       follow_controller_.setSegAngle(msg->value, msg->delta);
@@ -417,6 +419,7 @@ IController * ControlNode::controllerFor(Mode mode)
     case Mode::FOLLOW: return &follow_controller_;
     case Mode::ROTATE: return &rotate_controller_;
     case Mode::FOLLOW2: return &follow2_controller_;
+    case Mode::ORBIT:   return &orbit_controller_;
     default:           return nullptr;   // 미구현(3·4) → 정지 폴백
   }
 }

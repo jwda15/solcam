@@ -47,7 +47,7 @@ DIM     = "#aeb4bd"
 REC_RED = "#ff5a5a"
 FLASH_SEC = 0.1
 
-MODE_NAMES = {0: "IDLE", 1: "FOLLOW", 2: "ROTATE", 3: "FOLLOW2"}
+MODE_NAMES = {0: "IDLE", 1: "FOLLOW", 2: "ROTATE", 3: "FOLLOW2", 4: "ORBIT"}
 KEY2GEST = {"l": "like", "1": "one", "2": "two", "3": "three", "4": "four",
             "k": "dislike"}
 GNUM = {"one": "1", "two": "2", "three": "3", "four": "4"}
