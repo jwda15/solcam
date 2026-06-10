@@ -67,9 +67,9 @@ def build_menu(p: dict) -> MenuNode:
     deg = 3.141592653589793 / 180.0
     return MenuNode("Main", children={
         "one": MenuNode("Mode", children={
-            "one":   MenuNode("Follow", action=Action("mode", "Follow", {"mode": 1})),
-            "two":   MenuNode("Rotate", action=Action("mode", "Rotate", {"mode": 2})),
-            "three": MenuNode("Idle",   action=Action("mode", "Idle",   {"mode": 0})),
+            "one":   MenuNode("Idle",   action=Action("mode", "Idle",   {"mode": 0})),
+            "two":   MenuNode("Follow", action=Action("mode", "Follow", {"mode": 1})),
+            "three": MenuNode("Rotate", action=Action("mode", "Rotate", {"mode": 2})),
             "four":  MenuNode("More", children={      # 추가 팔로우 스타일(4칸 한계로 묶음)
                 "one": MenuNode("Follow2", action=Action("mode", "Follow2", {"mode": 3})),
                 "two": MenuNode("Orbit",   action=Action("mode", "Orbit",   {"mode": 4})),

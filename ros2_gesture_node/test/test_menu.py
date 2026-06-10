@@ -65,7 +65,7 @@ def test_navigate_and_mode_action():
     evs, t = feed(sm, "one", t, 1.6)             # Mode 카테고리
     assert "navigate" in kinds(evs)
     feed(sm, None, t, 0.1); t += 0.2             # 릴리즈
-    evs, t = feed(sm, "two", t, 1.6)             # 회전 모드 선택
+    evs, t = feed(sm, "three", t, 1.6)           # Rotate(모드2) 선택 (Idle/Follow/Rotate 순)
     acts = [e for e in evs if e.kind == "action"]
     assert acts and acts[0].action.payload == {"mode": 2}
     assert "close" in kinds(evs) and sm.state == "IDLE"   # stay=False → 닫힘
