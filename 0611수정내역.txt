@@ -1,0 +1,73 @@
+============================================================================
+ 0611 수정내역 — 알짜배기 (인지할 점만)
+ ※ 상세 변경이력은 0604수정내역.txt 의 "0607(1)~(6)" 항목 (실제 작업일=0611).
+============================================================================
+
+[이번 세션 한 일]
+ 1. 제어 게인/한계 재튜닝 (촬영 로봇=무게중심 높음 → 부드러움 우선)
+ 2. 폰 녹화 실동작화 (장치 2번 안 열고 캡처 프레임을 ffmpeg 파이프로 mp4)
+ 3. 전반 리뷰 후 견고성/인지/제어 수정
+ 4. 모드3 FOLLOW2 (leash) 추가
+ 5. 모드4 ORBIT (공전) 추가
+ 6. 메뉴 Mode 재배치: Idle / Follow / Rotate / More(→Follow2 / Orbit)
+
+----------------------------------------------------------------------------
+[★주행 모드 5종 — 동작 + odom 필요 여부]  (odom = 팀원 드라이버가 줘야 함)
+ 0 IDLE   : 정지 + 키보드 teleop. 상단yaw 정지.          odom 불필요
+ 1 FOLLOW : 선분(거리D+글로벌각φ) 유지, 진입시 캡처.       ★odom 필요
+ 2 ROTATE : 위치 고정, 몸체 yaw만 주인 추종.              ★odom 필요
+ 3 FOLLOW2: leash — 거리만 유지(단방향). 멀면 끌려가고     odom 불필요
+            가까우면 후퇴 없이 정지. 구도 무시(wz=0). 데드존 널널.
+ 4 ORBIT  : 공전 — 반지름 유지하며 천천히 CCW로 돌기.      odom 불필요
+            반지름=진입(선택) 시점 거리. 게걸음(wz=0).
+ → FOLLOW/ROTATE 는 /odom 없으면 몸체속도 0(상단yaw·리프트만 나감).
+   IDLE/FOLLOW2/ORBIT 는 /odom 없이도 동작 → 드라이버 전 실기 테스트 가능.
+
+[★상단 yaw(카메라)]
+ - FOLLOW/ROTATE/FOLLOW2/ORBIT 모두 동일 trackTopYaw + 동일 파라미터로
+   같은 속도 락온. IDLE 만 의도적으로 정지.
+ - 언와인딩 미구현(theta_soft_max≈무한): ORBIT 여러 바퀴 돌면 한 방향 누적 →
+   실기에서 케이블/슬립링 한계 보고 제한 걸 것.
+
+[★제어값 — 현실성/튜닝]
+ - v_max 0.4 m/s 유지(휠 토크 빠듯, 어차피 빠른 사람은 못 따라감).
+ - 재튜닝 후: 0.5m 오차→0.35m/s, 회전 17°→0.30rad/s. 큰 오차도 0.4에서 클램프.
+ - kd 는 일부러 안 올림(OAK depth 노이즈를 D항이 증폭→화면 떨림).
+ - 튜닝은 "값이 틀려서"가 아니라 감(感): 굼뜨면 kp↑, 출렁이면 kd 살짝↑.
+   숫자 확인 도구: ros2_control_node/test/realism_check.cpp (g++).
+
+[★폰 녹화 (요청 구조)]
+ - 녹화 시작=첫 프레임부터 Jetson(/tmp/solcam_rec) 저장 →
+   종료=stdin close로 mp4 마무리 후 adb push 로 폰 DCIM/solcam 전송.
+ - 장치(/dev/videoN) 두 번 안 엶(미리보기 프레임 재사용) → 꼬임/충돌 없음.
+
+[★운영 규율 (두 번 데인 부분)]
+ - 시작/종료는 scripts/solcam.sh {clean|run|stop|status} 로만.
+ - ★kill -9 금지: scrcpy -9 → /dev/videoN 포맷 잠김 / 노드 -9 → DDS shm 누적
+   → "내가 띄우면 검은화면". 코드 버그 아님. 꼬이면 solcam.sh clean.
+ - GUI 노드는 DISPLAY=:0 XAUTHORITY=... 필요(solcam.sh 가 처리).
+
+[손동작 메뉴 구조 (현재)]
+ Main → Mode(Idle/Follow/Rotate/More→Follow2,Orbit) / Wheel(거리·Pan) /
+        Lift(Up/Down) / Other(Phone줌 / OAK view / Power off / Rec)
+ - 따봉=열기, 거꾸로따봉(dislike)=뒤로, 1~4 선택(꾹).
+ - 거리조정(Wheel→Farther/Closer)은 FOLLOW·FOLLOW2·ORBIT 공유.
+
+----------------------------------------------------------------------------
+[검증 상태 (윈도우/오프라인)]
+ - g++ 시뮬 T1~T15 ALL PASS (T14=FOLLOW2, T15=ORBIT 포함)
+ - menu 단위테스트 12 PASS / battery 4 PASS / .py 문법 전수 OK
+ - 녹화 ffmpeg 파이프 메커니즘 sandbox 검증
+ - ★colcon 빌드·실기 런타임은 우분투에서 확인 (control_node.cpp 등 rclcpp 필요분)
+
+[남은 일 / 보류]
+ - 드라이버 노드(팀원): /control_cmd→메카넘·리프트·상단yaw, /odom·/top_yaw_state 발행
+ - 추적기 C++ 견고성(우분투 컴파일+튜닝): Lost 속도감쇠 / Lost Mahalanobis 게이트
+   / EMA 주인교체 reseed / 재획득 depth 포함 / oak intrinsic 실측 캘리브
+ - oak conf 0.3 (2차매칭 복구용) 실기 검증, 오검출 늘면 되돌릴 것
+ - 상단yaw 언와인딩(공전 누적), 모드5(COMPOSE 자율 프레이밍) 등
+
+[주의]
+ - 이 repo가 마운트 드라이브(D:/네트워크)면 git 인덱스가 가끔 손상됨
+   ("bad signature"). 우분투에선 로컬디스크(~/solcam)에서 git 다루기 권장.
+ - push 는 myrepo(jwda15/solcam) 로만. author jwda15. HaGRID .pt 커밋 금지.
