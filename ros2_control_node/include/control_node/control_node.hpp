@@ -38,6 +38,7 @@
 #include "control_node/idle_controller.hpp"
 #include "control_node/follow_controller.hpp"
 #include "control_node/rotate_controller.hpp"
+#include "control_node/follow2_controller.hpp"
 #include "control_node/state_estimator.hpp"
 #include "control_node/obstacle_field.hpp"
 
@@ -103,6 +104,7 @@ private:
   IdleController   idle_controller_;     // 모드0: 정지 + 키보드 teleop
   FollowController follow_controller_;   // 모드1: 선분 유지
   RotateController rotate_controller_;   // 모드2: 제자리 회전 추적
+  Follow2Controller follow2_controller_; // 모드3: leash(거리만 유지)
   StateEstimator   estimator_;
   ObstacleField    obstacle_field_;
   bool             engaged_ = false;     // 현 모드 engage(기준 캡처) 완료 여부

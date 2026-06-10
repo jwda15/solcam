@@ -913,3 +913,23 @@
   - destroy_node: 진행 중 녹화 안전 마무리(전송 생략).
  동작: 녹화 시작=첫 프레임부터 Jetson 저장 / 종료=즉시 폰 전송(요청 구조 그대로).
  검증: ffmpeg stdin 파이프로 합성 40프레임 → 유효 h264 mp4(해상도/프레임수 확인).
+
+----------------------------------------------------------------------------
+ 0607(5) 모드3 FOLLOW2(leash) 추가 — 거리만 유지, 구도 무시 (윈도우)
+----------------------------------------------------------------------------
+ 개념: 주인과 "줄로 묶인 듯" 거리만 유지. 구도(글로벌 위치/선분각) 무시,
+   데드존 널널 → "대충 따라오기". Mode enum 3 = STATIONARY(자리만)→FOLLOW2.
+ 특징:
+  - ★/odom 불필요(requiresOwner=false): 글로벌 추정 없이 몸체기준 주인방향
+    (theta_head - azimuth) + 거리(distance)만으로 제어 → 드라이버 오기 전에도
+    테스트 가능.
+  - 몸체 yaw 제어 없음(wz=0): 구도 안 잡고 그쪽으로 이동(메카넘)만. 상단 yaw
+    (OAK-D/촬영)는 주인 락온 유지.
+  - 거리오차에 널널 데드존(leash_dead): 밴드 안이면 정지, 밖이면 밴드끝 기준
+    P제어(kp_leash)로 접근/후퇴. 미탐지·hold_body 시 정지.
+ 파일: follow2_controller.{hpp,cpp} 신설, controllerFor/configure/adjust 라우팅,
+   CMakeLists, params.hpp+yaml(leash_distance 1.5 / leash_dead 0.5 / kp_leash 0.6).
+   손동작 거리조정(SEG_DISTANCE)은 모드1·3 공유. 메뉴 Mode→Follow2(mode3),
+   hud/preview 모드명 FOLLOW2.
+ 검증: g++ T14a~e ALL PASS (밴드내 정지 / 멀면 접근 wz=0 / 가까우면 후퇴 /
+   우측 방향 이동 / 미탐지 정지), odom 없이 동작 확인. menu 12 PASS.

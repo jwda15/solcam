@@ -130,7 +130,7 @@ enum class Mode : int
   IDLE       = 0,   // 대기: 모든 출력 0
   FOLLOW     = 1,   // 선분(거리+글로벌각) 유지 (구현됨)
   ROTATE     = 2,   // 제자리 회전 추적: 위치 고정, 몸체 yaw만 주인 추종 (구현됨)
-  STATIONARY = 3,   // 완전 정지 + 상단 yaw pan (TODO)
+  FOLLOW2    = 3,   // leash(줄): 거리만 유지, 구도/odom 불필요 (구현됨)
   COMPOSE    = 4,   // 구도잡기: 정지 + 리프트 활성 (TODO)
 };
 

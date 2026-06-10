@@ -158,7 +158,8 @@ ros2 topic pub /control_mode std_msgs/Int32 "data: 1" -1
 - [x] 측면센서 간단 장애물 회피
 - [x] ControlCmd / ProximityArray / AdjustCmd 메시지
 - [x] 헤더 선언/소스 정의 분리, params.hpp 파라미터 통합 (0604)
-- [ ] 모드3(STATIONARY), 4(COMPOSE)
+- [x] 모드3(FOLLOW2) leash 거리유지 (0607, odom 불필요)
+- [ ] 모드4(COMPOSE)
 - [ ] 상단 yaw 언와인딩(2바퀴 한계) — 지금은 파라미터 자리만
 - [ ] 리프트 자동 프레이밍(spatial_y 기반)
 - [ ] supervisor(손동작 상태기계, 미디어파이프) — AdjustCmd 발행 (팀원 분담)

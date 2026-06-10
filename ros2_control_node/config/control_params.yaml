@@ -43,6 +43,11 @@ control_node:
     seg_d_min: 0.5          # m, 손동작 조정 하한 (engage 캡처엔 미적용)
     seg_d_max: 3.0          # m, 손동작 조정 상한
 
+    # ----- 모드3 FOLLOW2 (leash): 거리만 유지, 구도/odom 불필요 -----
+    leash_distance: 1.5     # m, 유지할 목표 거리
+    leash_dead: 0.5         # m, ★널널한 데드존(밴드 안이면 정지)
+    kp_leash: 0.6           # 거리오차[m] → 속도[m/s] (P)
+
     # ----- 리프트 (스텝, 위치) -----
     z_min: 0.0              # m
     z_max: 0.5              # m

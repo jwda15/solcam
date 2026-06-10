@@ -23,6 +23,7 @@
 // ============================================================================
 #include "control_node/follow_controller.hpp"
 #include "control_node/rotate_controller.hpp"
+#include "control_node/follow2_controller.hpp"
 #include "control_node/idle_controller.hpp"
 #include "control_node/state_estimator.hpp"
 
@@ -94,6 +95,56 @@ static void engageNow(IController & ctrl, StateEstimator & est,
   in.owner_global = est.ownerGlobal(); in.owner_global_valid = true;
   in.theta_head = theta_head; in.adjust = adj;
   ctrl.engage(in);
+}
+
+
+// ---------- T14: 모드3 FOLLOW2(leash) — 거리만 유지, 구도 무시 ----------
+static void test_follow2()
+{
+  std::printf("\n== 모드3 FOLLOW2(leash) ==\n");
+  ControllerParams P;
+  Follow2Controller f; f.configure(P);
+  double dt = 0.02;
+
+  auto run = [&](double dist, double az, double th){
+    f.reset();
+    OwnerState o; o.is_detected = true; o.distance = dist; o.azimuth = az;
+    ControlInput in; in.owner = o; in.theta_head = th; in.dt = dt;
+    in.owner_global_valid = false;            // ★odom 없어도 동작해야 함
+    f.engage(in);
+    ControlCommand c;
+    for (int i=0;i<60;i++){ c = f.step(in); }  // 슬루 정상상태
+    return c;
+  };
+
+  // 밴드(1.0~2.0m) 안 → 정지
+  ControlCommand c1 = run(1.6, 0.0, 0.0);
+  bool t_band = std::abs(c1.body_vx)<1e-6 && std::abs(c1.body_vy)<1e-6;
+  char b[120]; std::snprintf(b,sizeof(b),"dist=1.6(밴드내) vx=%.3f vy=%.3f", c1.body_vx, c1.body_vy);
+  check(t_band, "T14a 밴드내 정지", b);
+
+  // 너무 멈(2.5m) → 주인 쪽(정면) 전진. wz=0
+  ControlCommand c2 = run(2.5, 0.0, 0.0);
+  std::snprintf(b,sizeof(b),"dist=2.5 vx=%.3f(>0=접근) vy=%.3f wz=%.3f", c2.body_vx, c2.body_vy, c2.body_yaw_rate);
+  check(c2.body_vx>0.05 && std::abs(c2.body_yaw_rate)<1e-9, "T14b 멀면 접근(wz=0)", b);
+
+  // 너무 가까움(0.7m) → 후퇴(vx<0)
+  ControlCommand c3 = run(0.7, 0.0, 0.0);
+  std::snprintf(b,sizeof(b),"dist=0.7 vx=%.3f(<0=후퇴)", c3.body_vx);
+  check(c3.body_vx<-0.02, "T14c 가까우면 후퇴", b);
+
+  // 주인 우측(az=+0.5) 멀리 → 그 방향으로 이동(vx>0, vy<0). odom 무관.
+  ControlCommand c4 = run(2.5, 0.5, 0.0);
+  std::snprintf(b,sizeof(b),"az=+0.5 dist=2.5 vx=%.3f vy=%.3f(우측=-)", c4.body_vx, c4.body_vy);
+  check(c4.body_vx>0.0 && c4.body_vy<0.0, "T14d 방향(우측 접근)", b);
+
+  // 미탐지 → 정지
+  f.reset();
+  OwnerState lost; lost.is_detected=false;
+  ControlInput in2; in2.owner=lost; in2.dt=dt; f.engage(in2);
+  ControlCommand c5; for(int i=0;i<10;i++) c5=f.step(in2);
+  std::snprintf(b,sizeof(b),"미탐지 vx=%.3f vy=%.3f", c5.body_vx, c5.body_vy);
+  check(std::abs(c5.body_vx)<1e-6 && std::abs(c5.body_vy)<1e-6, "T14e 미탐지 정지", b);
 }
 
 int main()
@@ -463,6 +514,7 @@ int main()
           "T13 모드0 teleop", buf);
   }
 
+  test_follow2();
   std::printf("== 결과: %s ==\n", g_fail == 0 ? "ALL PASS" : "FAIL 있음");
   return g_fail;
 }

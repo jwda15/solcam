@@ -70,6 +70,7 @@ def build_menu(p: dict) -> MenuNode:
             "one":   MenuNode("Follow", action=Action("mode", "Follow", {"mode": 1})),
             "two":   MenuNode("Rotate", action=Action("mode", "Rotate", {"mode": 2})),
             "three": MenuNode("Idle",   action=Action("mode", "Idle",   {"mode": 0})),
+            "four":  MenuNode("Follow2", action=Action("mode", "Follow2", {"mode": 3})),
         }),
         "two": MenuNode("Wheel", children={      # 차체(휠) 이동: 거리·좌우 회전(pan)
             "one":   MenuNode("Farther", action=Action("adjust", "Dist +%.1fm" % p["dist_step"],

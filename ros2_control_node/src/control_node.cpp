@@ -37,6 +37,7 @@ ControlNode::ControlNode()
   idle_controller_.configure(params_);
   follow_controller_.configure(params_);
   rotate_controller_.configure(params_);
+  follow2_controller_.configure(params_);
   engaged_ = false;
   obstacle_field_.setThresholds(obstacle_params_.stop_dist,
                                 obstacle_params_.slow_dist);
@@ -277,8 +278,9 @@ void ControlNode::gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg
 void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
 {
   switch (msg->param) {
-    case AdjustCmd::PARAM_SEG_DISTANCE:    // 모드1: 유지 거리 D
+    case AdjustCmd::PARAM_SEG_DISTANCE:    // 모드1 선분 거리 D + 모드3 leash 거리
       follow_controller_.setSegDistance(msg->value, msg->delta);
+      follow2_controller_.setLeashDistance(msg->value, msg->delta);
       break;
     case AdjustCmd::PARAM_SEG_ANGLE:       // 모드1: 선분 글로벌각 φ
       follow_controller_.setSegAngle(msg->value, msg->delta);
@@ -320,7 +322,7 @@ void ControlNode::controlStep()
 
   // 1) 현재 모드의 제어기 선택. 없으면(IDLE/미구현) 정지.
   IController * ctrl = controllerFor(mode_);
-  if (ctrl == nullptr) {   // 미구현 모드(3·4 등) → 정지 폴백
+  if (ctrl == nullptr) {   // 미구현 모드(4 COMPOSE 등) → 정지 폴백
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
       "모드 %d 미구현 → 정지", static_cast<int>(mode_));
     publishStop();
@@ -414,6 +416,7 @@ IController * ControlNode::controllerFor(Mode mode)
     case Mode::IDLE:   return &idle_controller_;
     case Mode::FOLLOW: return &follow_controller_;
     case Mode::ROTATE: return &rotate_controller_;
+    case Mode::FOLLOW2: return &follow2_controller_;
     default:           return nullptr;   // 미구현(3·4) → 정지 폴백
   }
 }

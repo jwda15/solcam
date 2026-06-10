@@ -19,7 +19,7 @@ draw() 데이터:
 """
 import time
 
-MODE_NAMES = {0: "IDLE", 1: "FOLLOW", 2: "ROTATE", 3: "MODE 3",
+MODE_NAMES = {0: "IDLE", 1: "FOLLOW", 2: "ROTATE", 3: "FOLLOW2",
               4: "MODE 4", 5: "MODE 5"}
 GESTURE_NUM = {"one": "1", "two": "2", "three": "3", "four": "4"}
 
