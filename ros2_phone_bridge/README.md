@@ -9,7 +9,7 @@
 ```
 폰 후면 카메라 ──scrcpy(USB)──▶ /dev/videoN(v4l2loopback) ──cv2──▶ /phone/image
 폰 배터리      ──adb dumpsys battery──────────────────────────────▶ /phone/battery
-/phone_cmd(record_toggle) ─▶ ffmpeg 로 /dev/videoN 녹화 ─(종료)─▶ adb push ─▶ 폰 DCIM
+/phone_cmd(record_toggle) ─▶ 캡처 프레임을 ffmpeg 파이프로 mp4 녹화(Jetson) ─(종료)─▶ adb push ─▶ 폰 DCIM
 ```
 
 - 영상 미리보기(LCD)와 녹화를 **같은 v4l2 장치**에서 분리 처리 → 단일 카메라

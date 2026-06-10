@@ -97,9 +97,10 @@ class PhoneBridge(Node):
         # ---- 상태 ----
         self.cap = None                 # cv2.VideoCapture
         self.scrcpy_proc = None         # scrcpy subprocess
-        self.rec_proc = None            # ffmpeg subprocess
+        self.rec_proc = None            # ffmpeg subprocess(녹화, stdin 파이프)
         self.rec_path = None
         self.recording = False
+        self._rec_lock = threading.Lock()   # 녹화 start/stop ↔ 캡처스레드 write 직렬화
         self._mock_phase = 0
         self._battery = 100
         # 영상 재연결(케이블 흔들림/scrcpy 재시작 대비)
@@ -325,7 +326,8 @@ class PhoneBridge(Node):
     def _capture_loop(self):
         """별도 스레드: v4l2 장치에서 프레임을 읽어 /phone/image 로 발행.
         read() 가 블로킹돼도 ROS executor(워치독/배터리)는 영향을 받지 않는다."""
-        period = 1.0 / max(1.0, self.publish_rate)
+        pub_period = 1.0 / max(1.0, self.publish_rate)
+        last_pub = 0.0
         while rclpy.ok() and not self._cap_stop:
             with self._cap_lock:            # read/open/release 직렬화(thread-unsafe 세그폴트 방지)
                 if self.cap is None:
@@ -351,8 +353,13 @@ class PhoneBridge(Node):
             self._read_fail = 0
             self._last_good_frame = time.time()
             self._wedge_warned = False
-            self.pub_img.publish(self._to_image_msg(frame))
-            time.sleep(period)
+            # cv2.read 가 장치 fps 로 페이싱 → 발행만 publish_rate 로 throttle.
+            now = time.time()
+            if now - last_pub >= pub_period:
+                self.pub_img.publish(self._to_image_msg(frame))
+                if self.recording:          # 녹화도 같은 캐던스 → 영상 속도 정확
+                    self._write_rec_frame(frame)
+                last_pub = now
 
     def _release_cap(self):
         with self._cap_lock:
@@ -456,6 +463,8 @@ class PhoneBridge(Node):
         self.pub_zoom.publish(Float32(data=float(self.zoom_target)))   # UI에 목표 배율 실시간 표시
 
     def _tick_zoom(self):
+        if self.recording:
+            return   # 녹화 중엔 scrcpy 재기동(줌 적용) 미룸 → 영상 끊김 방지
         if abs(self.zoom_target - self.zoom) < 1e-3:
             return
         if time.time() - self._last_zoom_cmd < self.zoom_apply_delay:
@@ -480,39 +489,79 @@ class PhoneBridge(Node):
             self._publish_recording()
             self.get_logger().info("[MOCK] 녹화 시작")
             return
+        with self._rec_lock:
+            if self.recording:
+                return
+            self.recording = True
+            self.rec_proc = None     # 첫 프레임에서 lazy open(해상도 확정 후)
+        self._publish_recording()
+        self.get_logger().info("녹화 시작 (첫 프레임부터 기록)")
+
+    def _rec_open(self, w, h):
+        """캡처 프레임을 mp4 로 인코딩하는 ffmpeg(stdin 파이프) 기동.
+        장치를 다시 열지 않고 phone_bridge 가 이미 읽는 프레임을 그대로 받는다."""
         os.makedirs(self.record_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.rec_path = os.path.join(self.record_dir, f"solcam_{ts}.mp4")
-        cmd = ["ffmpeg", "-y", "-f", "v4l2", "-i", self.video_device,
+        fps = max(1, int(round(self.publish_rate)))   # 발행 캐던스와 동일 → 속도 정확
+        cmd = ["ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24",
+               "-s", f"{w}x{h}", "-r", str(fps), "-i", "-",
                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                self.rec_path]
         try:
-            # stdin=PIPE: 'q'로 정상 종료(파일 손상 방지)
             self.rec_proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
                                              stdout=subprocess.DEVNULL,
                                              stderr=subprocess.DEVNULL)
-            self.recording = True
-            self._publish_recording()
-            self.get_logger().info(f"녹화 시작 → {self.rec_path}")
+            self.get_logger().info(f"녹화 인코더 시작 → {self.rec_path} ({w}x{h}@{fps})")
         except FileNotFoundError:
             self.get_logger().error("ffmpeg 미설치 — 녹화 불가")
             self.rec_proc = None
 
+    def _write_rec_frame(self, frame):
+        with self._rec_lock:
+            if not self.recording:
+                return
+            if self.rec_proc is None:
+                h, w = frame.shape[:2]
+                self._rec_open(w, h)
+                if self.rec_proc is None:
+                    return
+            try:
+                self.rec_proc.stdin.write(
+                    np.ascontiguousarray(frame, dtype=np.uint8).tobytes())
+            except (BrokenPipeError, ValueError, OSError):
+                self.get_logger().warn("녹화 인코더 파이프 끊김 → 녹화 중단")
+                self._finalize_locked(push=False)
+
     def _stop_record(self):
-        self.recording = False
-        self._publish_recording()
         if self.mock:
+            self.recording = False
+            self._publish_recording()
             self.get_logger().info("[MOCK] 녹화 종료")
             return
-        if self.rec_proc is not None:
+        with self._rec_lock:
+            self.recording = False
+            self._finalize_locked(push=True)   # stdin close → mp4 마무리 → 폰 전송
+        self._publish_recording()
+
+    def _finalize_locked(self, push):
+        """녹화 ffmpeg 를 정상 종료(stdin close → 파일 마무리)하고 옵션으로 폰 전송.
+        ★_rec_lock 을 잡은 채 호출할 것."""
+        proc = self.rec_proc
+        path = self.rec_path
+        self.rec_proc = None
+        if proc is None:
+            return   # 프레임이 한 장도 안 들어와 인코더 미기동
+        try:
+            proc.stdin.close()       # 입력 종료 → ffmpeg 가 mp4 헤더 마무리(손상 없음)
+            proc.wait(timeout=5.0)
+        except Exception:
             try:
-                self.rec_proc.communicate(input=b"q", timeout=5.0)
+                proc.terminate()
             except Exception:
-                self.rec_proc.terminate()
-            self.rec_proc = None
-            self.get_logger().info(f"녹화 종료 → {self.rec_path}")
-            # 폰으로 전송은 백그라운드(블로킹 방지)
-            path = self.rec_path
+                pass
+        self.get_logger().info(f"녹화 종료 → {path}")
+        if push:
             threading.Thread(target=self._push_to_phone, args=(path,),
                              daemon=True).start()
 
@@ -537,11 +586,9 @@ class PhoneBridge(Node):
         self._cap_stop = True
         if self._cap_thread is not None:
             self._cap_thread.join(timeout=2.0)
-        if self.rec_proc is not None:
-            try:
-                self.rec_proc.communicate(input=b"q", timeout=3.0)
-            except Exception:
-                self.rec_proc.terminate()
+        with self._rec_lock:          # 진행 중 녹화 마무리(종료 시 전송은 생략)
+            self.recording = False
+            self._finalize_locked(push=False)
         self._release_cap()
         if self.manage_scrcpy:
             self._kill_scrcpy()   # graceful 그룹 종료 + 폰서버 정리(고아 방지)

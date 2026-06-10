@@ -894,3 +894,22 @@
  - test/realism_check.cpp 추가(게인 바꿔가며 숫자 확인용). T1~T13 ALL PASS.
  ★실주행 튜닝: 굼뜨면 kp 올리고, 출렁이면 kd 살짝(노이즈 주의), 토크 여유 보고
    v_max/accel 조정. 값은 안전한 시작점.
+
+----------------------------------------------------------------------------
+ 0607(4) 폰 녹화 실동작화 — 캡처 프레임 파이프 녹화 + 종료 시 폰 전송 (윈도우)
+----------------------------------------------------------------------------
+ 문제: 기존 녹화는 /dev/videoN 을 ffmpeg 가 "또" 열어(scrcpy+cv2+ffmpeg=3중 오픈)
+   미리보기와 충돌·장치 꼬임. UI Rec 버튼은 있으나 실제로 안정 동작 안 함.
+ 변경(phone_bridge.py):
+  - 녹화를 캡처 스레드가 이미 읽는 프레임으로 한다(장치 2번 안 엶):
+    _start_record=플래그만 → 첫 프레임에서 _rec_open(ffmpeg stdin 파이프, rawvideo
+    bgr24 → libx264 mp4) lazy 기동 → _write_rec_frame 으로 프레임 push.
+    발행과 같은 캐던스(publish_rate)로 기록 → 영상 속도 정확.
+  - _stop_record → _finalize_locked: stdin close 로 mp4 정상 마무리(손상 없음)
+    → adb push 백그라운드 스레드로 폰 DCIM/solcam 전송. _rec_lock 으로 직렬화.
+  - 캡처 루프: 읽기(장치fps)와 발행(publish_rate throttle) 분리. scrcpy 재기동/
+    케이블 플랩 시 녹화는 프레임 공백만 생기고 파일은 유효(2중오픈 꼬임 제거).
+  - _tick_zoom: 녹화 중 줌 적용(scrcpy 재기동) 미룸 → 영상 끊김 방지.
+  - destroy_node: 진행 중 녹화 안전 마무리(전송 생략).
+ 동작: 녹화 시작=첫 프레임부터 Jetson 저장 / 종료=즉시 폰 전송(요청 구조 그대로).
+ 검증: ffmpeg stdin 파이프로 합성 40프레임 → 유효 h264 mp4(해상도/프레임수 확인).
