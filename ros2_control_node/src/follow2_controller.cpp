@@ -38,13 +38,13 @@ ControlCommand Follow2Controller::step(const ControlInput & in)
   if (!in.owner.is_detected) { stopBodyAndClearSlew(cmd); return cmd; }
   if (in.hold_body)          { stopBodySmooth(cmd, in.dt); return cmd; }
 
-  // ----- 거리 오차 + 널널한 데드존 -----
-  //  밴드(±leash_dead) 안이면 정지. 밖이면 밴드 끝을 기준으로 P제어.
-  double err = in.owner.distance - leash_distance_;   // +면 너무 멈(끌려감)
+  // ----- 거리: 진짜 "줄(leash)"처럼 단방향 -----
+  //  정해진 거리(leash_distance)+데드존(leash_dead)을 "넘을 때만" 끌려간다.
+  //  가까우면(밴드 안이거나 더 가까워도) 줄이 늘어져 가만히 있는다(후퇴 없음).
+  double over = in.owner.distance - (leash_distance_ + params_.leash_dead);
   double speed = 0.0;
-  if (std::abs(err) > params_.leash_dead) {
-    double e = err - std::copysign(params_.leash_dead, err);   // 밴드 끝에서 0
-    speed = std::clamp(params_.kp_leash * e, -params_.v_max, params_.v_max);
+  if (over > 0.0) {
+    speed = std::min(params_.kp_leash * over, params_.v_max);  // 항상 +(접근)
   }
 
   // ----- 몸체 기준 주인 방향 -----

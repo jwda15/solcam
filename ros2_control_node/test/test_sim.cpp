@@ -128,10 +128,10 @@ static void test_follow2()
   std::snprintf(b,sizeof(b),"dist=2.5 vx=%.3f(>0=접근) vy=%.3f wz=%.3f", c2.body_vx, c2.body_vy, c2.body_yaw_rate);
   check(c2.body_vx>0.05 && std::abs(c2.body_yaw_rate)<1e-9, "T14b 멀면 접근(wz=0)", b);
 
-  // 너무 가까움(0.7m) → 후퇴(vx<0)
+  // 너무 가까움(0.7m) → ★후퇴 없이 정지(줄 늘어짐)
   ControlCommand c3 = run(0.7, 0.0, 0.0);
-  std::snprintf(b,sizeof(b),"dist=0.7 vx=%.3f(<0=후퇴)", c3.body_vx);
-  check(c3.body_vx<-0.02, "T14c 가까우면 후퇴", b);
+  std::snprintf(b,sizeof(b),"dist=0.7 vx=%.3f vy=%.3f(가까워도 가만)", c3.body_vx, c3.body_vy);
+  check(std::abs(c3.body_vx)<1e-6 && std::abs(c3.body_vy)<1e-6, "T14c 가까우면 정지(후퇴X)", b);
 
   // 주인 우측(az=+0.5) 멀리 → 그 방향으로 이동(vx>0, vy<0). odom 무관.
   ControlCommand c4 = run(2.5, 0.5, 0.0);

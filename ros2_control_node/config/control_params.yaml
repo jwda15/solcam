@@ -45,7 +45,7 @@ control_node:
 
     # ----- 모드3 FOLLOW2 (leash): 거리만 유지, 구도/odom 불필요 -----
     leash_distance: 1.5     # m, 유지할 목표 거리
-    leash_dead: 0.5         # m, ★널널한 데드존(밴드 안이면 정지)
+    leash_dead: 0.5         # m, 슬랙(거리+이 값 넘을 때만 끌려감; 가까우면 정지, 후퇴X)
     kp_leash: 0.6           # 거리오차[m] → 속도[m/s] (P)
 
     # ----- 리프트 (스텝, 위치) -----

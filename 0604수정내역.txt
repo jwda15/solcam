@@ -933,3 +933,9 @@
    hud/preview 모드명 FOLLOW2.
  검증: g++ T14a~e ALL PASS (밴드내 정지 / 멀면 접근 wz=0 / 가까우면 후퇴 /
    우측 방향 이동 / 미탐지 정지), odom 없이 동작 확인. menu 12 PASS.
+
+ - FOLLOW2 단방향(진짜 leash) 수정 (0607): 정해진 거리+데드존을 "넘을 때만"
+   끌려가고(접근), 가까우면 후퇴 없이 정지. (over = distance-(leash_distance+
+   leash_dead); over>0 일 때만 +속도.) T14c "가까우면 정지"로 갱신, 전 케이스 PASS.
+   ※상단 yaw: FOLLOW/ROTATE/FOLLOW2 모두 동일 trackTopYaw + 동일 파라미터
+     (kp_yaw/w_top_max/az_dead/top_lead_max) → 같은 속도로 락온. IDLE만 정지.
