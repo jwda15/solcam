@@ -14,28 +14,28 @@ control_node:
     v_max: 0.4              # m/s, 몸체 평면속도 상한 (벡터 크기)
                             # ★휠모터(JGB37-520) 토크 여유 적음 → 0.4 유지.
                             #  올리려면 실차 전류/발열 확인 후 조금씩.
-    w_body_max: 1.0         # rad/s, 몸체 각속도 상한
+    w_body_max: 0.7         # rad/s, 몸체 각속도 상한
                             # ※직진+회전 동시면 휠 부하 가중 → 토크 빠듯하면 같이 낮춤
-    body_accel_max: 0.8     # m/s^2, 평면 가속 상한 (슬루) — 미끄럼/급발진 방지
-    yaw_accel_max: 3.0      # rad/s^2, 각가속 상한 (슬루)
-    w_top_max: 2.0          # rad/s, 상단yaw 목표각 변화율 상한 (스텝 보호)
-    top_lead_max: 1.0       # rad, 상단yaw 목표가 실측각보다 앞설 최대 리드
+    body_accel_max: 0.5     # m/s^2, 평면 가속 상한 (슬루) — 미끄럼/급발진 방지
+    yaw_accel_max: 1.5      # rad/s^2, 각가속 상한 (슬루)
+    w_top_max: 1.5          # rad/s, 상단yaw 목표각 변화율 상한 (스텝 보호)
+    top_lead_max: 0.8       # rad, 상단yaw 목표가 실측각보다 앞설 최대 리드
                             # (드라이버 지연/정지 시 목표 폭주 방지. 0 이하=비활성)
 
     # ----- 상단 yaw 게인 (카메라 락온; 스텝=위치 명령) -----
-    kp_yaw: 0.8             # azimuth → 목표각 보정 게인
-    az_dead: 0.02           # rad, azimuth 불감대
+    kp_yaw: 0.7             # azimuth → 목표각 보정 게인
+    az_dead: 0.03           # rad, azimuth 불감대
 
     # ----- 몸체 위치 게인 (선분 끝점 추종, PD) -----
-    kp_pos: 1.0             # 위치오차[m] → 속도[m/s] (P)
+    kp_pos: 0.7             # 위치오차[m] → 속도[m/s] (P)
     kd_pos: 0.15            # 오차 변화율 감쇠 (D). 0이면 P만.
                             # ★실주행: 0에서 시작, 출렁이면 올리기. 노이즈 크면 떨림 주의
-    pos_dead: 0.05          # m, 위치 불감대
+    pos_dead: 0.08          # m, 위치 불감대
 
     # ----- 몸체 yaw 게인 (글로벌 헤딩 유지, PD; 모드1·모드2 공용) -----
-    kp_byaw: 1.5            # yaw오차[rad] → 각속도[rad/s] (P)
+    kp_byaw: 1.0            # yaw오차[rad] → 각속도[rad/s] (P)
     kd_byaw: 0.1            # yaw 감쇠 (D). 0이면 P만.
-    byaw_dead: 0.03         # rad, yaw 불감대
+    byaw_dead: 0.05         # rad, yaw 불감대
     face_owner: true        # true=로봇 정면이 주인 향함 (+heading_offset 가산)
 
     # ----- 선분 기본값 (진입 시 캡처되나, 추정 실패 시 폴백값) -----
