@@ -1,0 +1,35 @@
+# ============================================================================
+#  driver_params.yaml — driver_bridge 런타임 파라미터
+#
+#  ★ 실기 브링업 전 반드시 확인할 값:
+#    1) port           : Jetson에서 STM32가 잡히는 장치
+#    2) encoder_cpr     : 휠 1회전당 엔코더 카운트 (실측 캘리브 필수!)
+#    3) encoder_order/signs : 엔코더↔휠 매핑·부호 (한 바퀴씩 돌려보고 확정)
+#    4) wheel_radius/lx/ly   : 펌웨어 WHEEL_R/LX/LY 와 동일하게
+# ============================================================================
+driver_bridge:
+  ros__parameters:
+    # ----- 시리얼 -----
+    port: /dev/ttyUSB0       # USB-시리얼. Jetson 40핀 UART면 /dev/ttyTHS1
+    baud: 115200             # 펌웨어 USART1 고정
+    mock: false              # true면 시리얼 없이 로직만(오프라인 테스트)
+
+    # ----- 차체 기구 (펌웨어 main.c #define 과 일치시킬 것) -----
+    wheel_radius: 0.05       # m   (WHEEL_R)
+    wheel_lx: 0.36           # m   (WHEEL_LX, 좌우 거리 절반)
+    wheel_ly: 0.26           # m   (WHEEL_LY, 전후 거리 절반)
+
+    # ----- 엔코더 → 오도메트리 -----
+    # ★PLACEHOLDER. JGB37-520 기준 (PPR × 4(쿼드) × 기어비). 실측 후 교체!
+    #   예) 11 PPR × 4 × 30:1 = 1320. 기어비 다르면 값도 다름.
+    encoder_cpr: 1320.0
+    encoder_order: [0, 1, 2, 3]   # 수신 enc1..4 → 휠 [FL, FR, RL, RR]
+    encoder_signs: [1, 1, 1, 1]   # 전진 시 +가 되도록 부호 조정
+
+    # ----- 발행/통신 -----
+    tx_rate: 50.0            # Hz, STM32로 명령 송신(하트비트)
+    cmd_timeout: 0.3         # s, /control_cmd 끊기면 0속도 송신
+    publish_odom: true
+    odom_frame: odom
+    base_frame: base_link
+    verify_rx_checksum: true # 체크섬 깨진 상태프레임 버림

@@ -1,0 +1,82 @@
+============================================================================
+ 0611 드라이버 통합 — 이후 할 일 체크리스트
+ ※ 이번 세션: ros2_driver_bridge 신규 추가 + STM32 펌웨어 안전패치 +
+   펌웨어를 driver_firmware/ 로 레포 편입.
+============================================================================
+
+[이번 세션 한 일 — 인지용]
+ 1. 팀원 드라이버 = STM32F407 펌웨어(ROS X, USART1 바이너리)임을 확인.
+ 2. ros2_driver_bridge 신규 패키지 추가 (control_node ↔ STM32 UART 변환).
+    - /control_cmd 구독 → 28B 프레임 송신 (50Hz 하트비트, 끊기면 0속도)
+    - 19B 상태 수신 → 메카넘 정기구학+적분 /odom, yaw각 /top_yaw_state
+ 3. 펌웨어 안전패치: ① 명령 워치독(300ms) ② 상태프레임 체크섬/크기 버그.
+ 4. 펌웨어를 solcam-main/driver_firmware/ 로 복사(Debug 제외) → 같이 커밋.
+
+----------------------------------------------------------------------------
+[A. 커밋 (지금 바로)]
+ □ git status 로 새 항목 확인:
+     ros2_driver_bridge/   (브리지 패키지)
+     driver_firmware/      (STM32 펌웨어, Debug 제외)
+     .gitignore            (firmware Debug 규칙 추가)
+     0611_드라이버통합_할일.txt
+ □ git add -A && git commit -m "드라이버 브리지 + STM32 펌웨어 편입"
+ □ push 는 myrepo(jwda15/solcam) 로만. author jwda15.
+ ※ repo가 마운트 드라이브(D:)면 git 인덱스 손상 가능("bad signature").
+   우분투 로컬디스크(~/solcam)에서 git 다루기 권장.
+
+----------------------------------------------------------------------------
+[B. Jetson 빌드 (Humble, Ubuntu 22.04)]
+ □ 의존 설치:  sudo apt install python3-serial
+ □ 시리얼 권한: sudo usermod -aG dialout $USER  → 재로그인
+ □ 워크스페이스에 심볼릭 링크(영문 경로!):
+     cd ~/solcam_ws/src
+     ln -sfn <repo>/ros2_driver_bridge ros2_driver_bridge
+ □ 빌드 (메시지 의존 때문에 tracking/control 과 함께):
+     colcon build --packages-select \
+       ros2_tracking_node ros2_control_node ros2_driver_bridge
+     source install/setup.bash
+ ※ ros2_driver_bridge 는 ros2_control_node(ControlCmd.msg)에 의존 →
+   control 노드가 먼저(또는 함께) 빌드돼 있어야 함.
+
+----------------------------------------------------------------------------
+[C. 펌웨어 재플래시 (패치 반영 필수)]
+ □ STM32CubeIDE 로 driver_firmware/ import → 빌드 → ST-Link 플래시.
+ □ 패치 안 된 구버전이 보드에 남아있으면:
+   - 워치독 없음(폭주 위험), 상태 체크섬 깨짐(/odom 검증 실패).
+   - 임시로만 brige 의 verify_rx_checksum:=false 로 받을 수 있음(비권장).
+
+----------------------------------------------------------------------------
+[D. ★캘리브 (config/driver_params.yaml) — 실주행 전 반드시]
+ □ port        : ls /dev/ttyUSB* /dev/ttyTHS*  로 확인 (USB=ttyUSB0, 핀=ttyTHS1)
+ □ encoder_cpr : 휠 1회전당 카운트. 휠을 정확히 1바퀴 돌리며 enc 누적 측정.
+                 (지금 1320 은 placeholder — JGB37-520 추정값)
+ □ encoder_order / encoder_signs :
+                 전진시켰을 때 모든 휠 w가 +가 되도록, 좌/우/회전 부호 맞도록 조정.
+                 ros2 topic echo /odom 보며 확인.
+ □ wheel_radius / wheel_lx / wheel_ly : 펌웨어 #define 과 동일하게.
+ □ yaw 부호    : 상단yaw 명령 줬을 때 ROS CCW(+) 방향과 실제 회전 일치 확인.
+                 반대면 펌웨어 Yaw_SetTarget DIR 부호 뒤집기.
+
+----------------------------------------------------------------------------
+[E. 검증 순서]
+ □ 프로토콜 단위검증(오프라인):
+     python3 ros2_driver_bridge/test/test_protocol.py   # 전부 PASS 확인
+ □ 브리지 단독(시리얼 없이):
+     ros2 launch ros2_driver_bridge driver.launch.py mock:=true
+ □ 보드 연결 후:
+     ros2 launch ros2_driver_bridge driver.launch.py port:=/dev/ttyUSB0
+     ros2 topic echo /top_yaw_state      # yaw각 들어오나
+     ros2 topic echo /odom               # 휠 굴리면 위치/속도 변하나
+ □ 워치독 테스트: 명령 흘리다 브리지 Ctrl+C → 바퀴 300ms 내 정지 확인.
+ □ 전체 파이프라인:
+     (검출+추적) + control.launch.py mode:=1 + driver.launch.py
+     → 사람 따라 차체 움직이는지. /control_debug 로 내부상태 확인.
+
+----------------------------------------------------------------------------
+[F. 남은/보류]
+ □ odom 드리프트 점검 — 휠 데드레커닝이라 누적오차. 장시간 모드(FOLLOW/ROTATE)
+   에서 영향 보면 보정 검토.
+ □ 펌웨어 클럭 16MHz(PLL 미설정) — yaw/리프트 속도 부족하면 PLL 설정.
+ □ UART 재동기화: 브리지는 헤더+체크섬으로 재동기. 펌웨어 RX도 필요시 보강.
+ □ (기존) 추적기 C++ 견고성, oak intrinsic 실측 캘리브 등은 0611수정내역.txt 참고.
+============================================================================

@@ -55,3 +55,7 @@ _check.txt
 
 # depthai 크래시덤프 등 캐시(추적 안 함)
 .cache/
+
+# STM32 드라이버 펌웨어 빌드 산출물 (STM32CubeIDE가 재생성)
+driver_firmware/Debug/
+driver_firmware/Release/

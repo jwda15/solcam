@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ros2_driver_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    control_node(/control_cmd) ↔ STM32F407 드라이버 보드 UART 브리지.
+    6자유도 명령을 28바이트 바이너리 프레임으로 STM32에 송신하고,
+    STM32가 보내는 19바이트 상태 프레임(휠 엔코더 + 상단yaw각)을 받아
+    메카넘 정기구학으로 /odom 을, 상단yaw각을 /top_yaw_state 로 발행한다.
+  </description>
+  <maintainer email="jwda15@users.noreply.github.com">jwda15</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>ros2_control_node</depend>
+  <!-- 시리얼: python3-serial (pyserial). Jetson: sudo apt install python3-serial -->
+  <exec_depend>python3-serial</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
