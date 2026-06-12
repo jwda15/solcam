@@ -10,12 +10,19 @@ palm은 모드번호 five와 헷갈려 메뉴 번호는 one~four만 쓴다.
 
 ```
 like 1.5s ─▶ 메인 메뉴
-  one    주행 모드   1 팔로우 · 2 회전 · 3 정지
-  two    거리·구도   1 멀리 · 2 가까이 · 3 헤딩좌 · 4 헤딩우
-  three  리프트      1 올리기 · 2 내리기
-  four   촬영·시스템 1 폰 카메라(줌/포커스, 자리만) · 2 OAK 화면 · 3 전원(자리만)
+  one    주행 모드   1 Idle · 2 Follow · 3 Rotate · 4 More(1 Follow2 · 2 Orbit)
+  two    Wheel(구도) 1 Distance(1 Farther · 2 Closer)
+                     2 Bearing (1 CCW · 2 CW)      ← 공전: 거리 유지하며 주인 주위 원운동
+                     3 Pan     (1 Pan L · 2 Pan R) ← 촬영 카메라 헤딩 오프셋
+  three  리프트      1 Up · 2 Down
+  four   촬영·시스템 1 Phone(1 Zoom+ · 2 Zoom-) · 2 OAK view · 3 Power off · 4 Rec
   dislike(거꾸로 따봉)  한 단계 뒤로 (메인에서는 닫기) / 10초 무입력 = 자동 취소
 ```
+
+Bearing(공전)은 모드1(FOLLOW)에서만 의미가 있다. `SEG_ANGLE`(φ)을 바꾸면
+목표점이 `주인 − D·(cosφ,sinφ)`라 거리 D를 유지하며 주인 주위를 돈다. 이때
+몸체는 계속 주인을 향하고(필요시 Pan 오프셋만큼 비틀린 채로), 상단 yaw(OAK)는
+주인을 락온해서 — 공전 중에도 카메라가 주인을 계속 본다.
 
 선택 = 제스처 1.5초 유지. 조절 항목(거리·헤딩·리프트·줌)은 실행 후 메뉴에
 머물러 손을 유지하면 1.5초마다 반복 실행된다. 카테고리 진입 직후에는

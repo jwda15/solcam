@@ -75,16 +75,35 @@ def build_menu(p: dict) -> MenuNode:
                 "two": MenuNode("Orbit",   action=Action("mode", "Orbit",   {"mode": 4})),
             }),
         }),
-        "two": MenuNode("Wheel", children={      # 차체(휠) 이동: 거리·좌우 회전(pan)
-            "one":   MenuNode("Farther", action=Action("adjust", "Dist +%.1fm" % p["dist_step"],
-                                                       {"param": "SEG_DISTANCE", "value": +p["dist_step"], "delta": True}, stay=True)),
-            "two":   MenuNode("Closer",  action=Action("adjust", "Dist -%.1fm" % p["dist_step"],
-                                                       {"param": "SEG_DISTANCE", "value": -p["dist_step"], "delta": True}, stay=True)),
+        # 차체(휠) 이동 — 구도 3종을 카테고리로 분리(각자 방향 2개).
+        #  Distance: 주인과의 거리 D            (SEG_DISTANCE)
+        #  Bearing : 주인 주위 공전(원운동)     (SEG_ANGLE) ← 거리 유지하며 방위각만 변경.
+        #            모드1(FOLLOW)에서 목표점 = 주인 − D·(cosφ,sinφ) 라 φ를 바꾸면
+        #            주인 주위를 돈다. 몸체는 계속 주인을 향하고(ownerBearing+offset),
+        #            상단 yaw(OAK)는 주인 락온 유지 → 공전 중에도 카메라가 주인을 본다.
+        #            Pan 오프셋이 걸려 있으면 그 상대 구도도 유지된 채 공전.
+        #  Pan     : 촬영 카메라 헤딩 오프셋     (HEADING_OFFSET) ← 주인 아닌 방향 보기.
+        "two": MenuNode("Wheel", children={
+            "one": MenuNode("Distance", children={
+                "one": MenuNode("Farther", action=Action("adjust", "Dist +%.1fm" % p["dist_step"],
+                                                         {"param": "SEG_DISTANCE", "value": +p["dist_step"], "delta": True}, stay=True)),
+                "two": MenuNode("Closer",  action=Action("adjust", "Dist -%.1fm" % p["dist_step"],
+                                                         {"param": "SEG_DISTANCE", "value": -p["dist_step"], "delta": True}, stay=True)),
+            }),
+            # 공전: SEG_ANGLE +φ = CCW(반시계). (★실차에서 회전 방향 부호 확인할 것)
+            "two": MenuNode("Bearing", children={
+                "one": MenuNode("CCW", action=Action("adjust", "Arc CCW %.0f" % p["bearing_step_deg"],
+                                                     {"param": "SEG_ANGLE", "value": +p["bearing_step_deg"] * deg, "delta": True}, stay=True)),
+                "two": MenuNode("CW",  action=Action("adjust", "Arc CW %.0f" % p["bearing_step_deg"],
+                                                     {"param": "SEG_ANGLE", "value": -p["bearing_step_deg"] * deg, "delta": True}, stay=True)),
+            }),
             # 헤딩 오프셋: CCW+ = 좌. (★실차에서 좌우 부호 확인할 것)
-            "three": MenuNode("Pan L", action=Action("adjust", "Pan L %.0f" % p["heading_step_deg"],
+            "three": MenuNode("Pan", children={
+                "one": MenuNode("Pan L", action=Action("adjust", "Pan L %.0f" % p["heading_step_deg"],
                                                        {"param": "HEADING_OFFSET", "value": +p["heading_step_deg"] * deg, "delta": True}, stay=True)),
-            "four":  MenuNode("Pan R", action=Action("adjust", "Pan R %.0f" % p["heading_step_deg"],
+                "two": MenuNode("Pan R", action=Action("adjust", "Pan R %.0f" % p["heading_step_deg"],
                                                        {"param": "HEADING_OFFSET", "value": -p["heading_step_deg"] * deg, "delta": True}, stay=True)),
+            }),
         }),
         "three": MenuNode("Lift", children={
             "one": MenuNode("Up", action=Action("adjust", "Lift +%.2fm" % p["lift_step"],

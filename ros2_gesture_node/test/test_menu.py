@@ -7,7 +7,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ros2_gesture_node.menu import MenuStateMachine, build_menu
 
-STEPS = {"dist_step": 0.3, "heading_step_deg": 15.0, "lift_step": 0.1}
+STEPS = {"dist_step": 0.3, "bearing_step_deg": 8.0,
+         "heading_step_deg": 15.0, "lift_step": 0.1}
 
 
 def make_sm():
@@ -78,6 +79,8 @@ def test_stay_item_repeats_while_held():
     t = open_menu(sm)
     _, t = feed(sm, "two", t, 1.6)               # Wheel(차체 이동) 진입
     feed(sm, None, t, 0.1); t += 0.2
+    _, t = feed(sm, "one", t, 1.6)               # Distance 카테고리 진입
+    feed(sm, None, t, 0.1); t += 0.2
     evs, t = feed(sm, "one", t, 3.2)             # 'Farther' 3.2초 유지
     acts = [e for e in evs if e.kind == "action"]
     assert len(acts) >= 5                        # 1.5초 후 연속 반복 → 다수
@@ -92,7 +95,9 @@ def test_stay_repeat_stops_on_release():
     t = open_menu(sm)
     _, t = feed(sm, "two", t, 1.6)               # Wheel
     feed(sm, None, t, 0.1); t += 0.2
-    _, t = feed(sm, "one", t, 1.8)               # 무장 + 연속 시작
+    _, t = feed(sm, "one", t, 1.6)               # Distance 카테고리 진입
+    feed(sm, None, t, 0.1); t += 0.2
+    _, t = feed(sm, "one", t, 1.8)               # Farther 무장 + 연속 시작
     evs, t = feed(sm, None, t, 0.6)              # 손 뗌 → 연속 정지
     assert sm.snapshot()["hold_progress"] == 0.0
     evs, t = feed(sm, "one", t, 0.5)             # 0.5초만 → 재무장 안 됨
@@ -152,6 +157,21 @@ def test_phone_and_system_leaves():
     acts = [e for e in evs if e.kind == "action"]
     assert acts and acts[0].action.kind == "phone"
     assert acts[0].action.payload["cmd"] == "zoom_in"
+
+
+def test_bearing_orbit_emits_seg_angle():
+    """Wheel > Bearing > CCW = 공전(SEG_ANGLE +). stay라 연속 발동."""
+    sm = make_sm()
+    t = open_menu(sm)
+    _, t = feed(sm, "two", t, 1.6)               # Wheel 진입
+    feed(sm, None, t, 0.1); t += 0.2
+    _, t = feed(sm, "two", t, 1.6)               # Bearing 카테고리 진입
+    feed(sm, None, t, 0.1); t += 0.2
+    evs, t = feed(sm, "one", t, 2.0)             # CCW 유지 → 공전
+    acts = [e for e in evs if e.kind == "action"]
+    assert acts and all(a.action.payload["param"] == "SEG_ANGLE" for a in acts)
+    assert all(a.action.payload["value"] > 0 for a in acts)   # CCW = +φ
+    assert sm.state == "MENU"                    # stay=True → 메뉴 유지
 
 
 def test_record_toggle_leaf():

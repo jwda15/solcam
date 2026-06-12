@@ -27,7 +27,8 @@ import pygame
 from ros2_gesture_node.menu import MenuStateMachine, build_menu
 from ros2_gesture_node.hud import Hud
 
-STEPS = {"dist_step": 0.3, "heading_step_deg": 15.0, "lift_step": 0.1}
+STEPS = {"dist_step": 0.3, "bearing_step_deg": 8.0,
+         "heading_step_deg": 15.0, "lift_step": 0.1}
 KEY_GESTURE = {pygame.K_l: "like", pygame.K_1: "one", pygame.K_2: "two",
                pygame.K_3: "three", pygame.K_4: "four", pygame.K_p: "palm"}
 

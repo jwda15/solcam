@@ -51,12 +51,14 @@ class GestureNode(Node):
         self.declare_parameter("menu_timeout", 10.0)        # s, 무입력 취소
         self.declare_parameter("dropout_tol", 0.4)          # s, 인식 끊김 허용
         self.declare_parameter("dist_step", 0.3)            # m, 거리 조절 폭
-        self.declare_parameter("heading_step_deg", 15.0)    # deg, 헤딩 조절 폭
+        self.declare_parameter("bearing_step_deg", 8.0)     # deg, 공전(방위각) 조절 폭
+        self.declare_parameter("heading_step_deg", 15.0)    # deg, 헤딩(Pan) 조절 폭
         self.declare_parameter("lift_step", 0.1)            # m, 리프트 조절 폭
         gp = lambda n: self.get_parameter(n).value
 
         # ----- 부품 조립 -----
         steps = {"dist_step": float(gp("dist_step")),
+                 "bearing_step_deg": float(gp("bearing_step_deg")),
                  "heading_step_deg": float(gp("heading_step_deg")),
                  "lift_step": float(gp("lift_step"))}
         self.sm = MenuStateMachine(
