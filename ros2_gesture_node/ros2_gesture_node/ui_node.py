@@ -133,7 +133,9 @@ class UiNode(Node):
                 return
         state = self.snap.get("state")
         oak_view = bool(self.snap.get("ui_flags", {}).get("oak_view", False))
-        split = (state == "MENU") or oak_view
+        # 폰 영상이 없으면(미연결/nophone) 메뉴에서도 분할하지 않고 OAK 전체 배경.
+        #  (검은 PHONE 반쪽 방지) — OAK view 토글은 명시적이라 그대로 분할.
+        split = oak_view or (state == "MENU" and self.phone_frame is not None)
         bg = self.phone_frame if self.phone_frame is not None else self.oak_frame
         self.hud.draw(self.screen, self.snap, mode=self.mode, battery=self.battery,
                       recording=self.recording, rec_start=self.rec_start,

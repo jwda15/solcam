@@ -81,9 +81,20 @@ status() {
 
 run() {
   mkdir -p "$LOG"; src
-  echo "[run] DISPLAY=$DISPLAY  WS=$WS  VIDEO=$VIDEO_DEV"
-  echo "[run] 0) v4l2loopback 깨끗이 리로드(매 실행 클린 시작)"
-  $RESET_CMD || echo "[run] ! 리로드 실패(무시하고 진행) — $RESET 확인"
+  # 폰 사용 여부: 'run nophone' 또는 SOLCAM_PHONE=0 → 폰(scrcpy/v4l2/연동) 전부 생략.
+  #  폰은 거치만 하고 알아서 촬영, 잿슨과 영상연동 안 할 때.
+  local phone=1
+  [ "${1:-}" = "nophone" ] && phone=0
+  [ "${SOLCAM_PHONE:-1}" = "0" ] && phone=0
+  echo "[run] DISPLAY=$DISPLAY  WS=$WS  VIDEO=$VIDEO_DEV  phone=$phone"
+
+  if [ "$phone" = 1 ]; then
+    echo "[run] 0) v4l2loopback 깨끗이 리로드(매 실행 클린 시작)"
+    $RESET_CMD || echo "[run] ! 리로드 실패(무시하고 진행) — $RESET 확인"
+  else
+    echo "[run] 0) 폰 비활성(nophone) — scrcpy/v4l2/폰연동 생략"
+  fi
+
   echo "[run] 1) OAK 검출+추적 ($LOG/oak.log)"
   ( cd "$REPO" && ros2 launch ros2_yolo_oak oak_tracking.launch.py viz:=false ) >"$LOG/oak.log" 2>&1 &
   sleep 6
@@ -93,29 +104,36 @@ run() {
        model_path:="$REPO/ros2_gesture_node/models/YOLOv10n_gestures.pt" \
        >"$LOG/gesture.log" 2>&1 &
   sleep 3
-  echo "[run] 3) phone_bridge (managed scrcpy + 자동복구, $LOG/phone.log)"
-  ros2 run ros2_phone_bridge phone_bridge --ros-args \
-       -p video_device:="$VIDEO_DEV" -p manage_scrcpy:=true \
-       -p scrcpy_bin:="$SCRCPY_BIN" -p adb_bin:="$ADB_BIN" \
-       -p camera_size:="$CAM_SIZE" \
-       -p v4l2_reset_cmd:="$RESET_CMD" -p wedge_timeout:=10.0 \
-       >"$LOG/phone.log" 2>&1 &
-  echo "[run] 4) /phone/image 첫 프레임 대기..."
-  for i in $(seq 1 20); do
-    sleep 1
-    if ros2 topic hz /phone/image --window 5 2>/dev/null | grep -q average; then
-      echo "[run]   /phone/image 수신 OK"; break; fi
-    [ "$i" = 20 ] && echo "[run]   ! 아직 프레임 없음 — $LOG/phone.log 확인"
-  done
-  echo "[run] 5) ui_node (LCD, $LOG/ui.log) — 디스커버리+첫프레임 ~10초, 검정이어도 대기"
+  # ★UI 먼저 — 폰 영상이 없어도(또는 nophone) 즉시 뜬다. ui_node 는 /phone/image 가
+  #  없으면 OAK 영상/플레이스홀더로 렌더하므로 블로킹/검은멈춤 없음. 폰은 나중에
+  #  붙어도 late-join 으로 자동 표시된다.
+  echo "[run] 3) ui_node (LCD, $LOG/ui.log) — 폰 없어도 바로 뜸(OAK/검정 배경)"
   ros2 run ros2_gesture_node ui_node --ros-args -p fullscreen:=false >"$LOG/ui.log" 2>&1 &
+
+  if [ "$phone" = 1 ]; then
+    echo "[run] 4) phone_bridge (managed scrcpy + 자동복구, $LOG/phone.log)"
+    ros2 run ros2_phone_bridge phone_bridge --ros-args \
+         -p video_device:="$VIDEO_DEV" -p manage_scrcpy:=true \
+         -p scrcpy_bin:="$SCRCPY_BIN" -p adb_bin:="$ADB_BIN" \
+         -p camera_size:="$CAM_SIZE" \
+         -p v4l2_reset_cmd:="$RESET_CMD" -p wedge_timeout:=10.0 \
+         >"$LOG/phone.log" 2>&1 &
+    # 폰 첫 프레임 확인은 백그라운드(논블로킹) — 안 와도 UI/파이프라인은 계속 돈다.
+    ( for i in $(seq 1 20); do sleep 1
+        if ros2 topic hz /phone/image --window 5 2>/dev/null | grep -q average; then
+          echo "[run]   /phone/image 수신 OK"; exit 0; fi
+      done
+      echo "[run]   ! 폰 영상 미수신(20s) — UI는 OAK/검정 배경으로 계속. $LOG/phone.log 확인" ) &
+  else
+    echo "[run] 4) phone_bridge 생략(nophone). 줌/녹화전송 등 잿슨→폰 기능 비활성."
+  fi
   echo "[run] 기동 완료. 종료: scripts/solcam.sh stop"
 }
 
 case "${1:-}" in
   clean) src; clean ;;
-  run)   run ;;
+  run)   run "${2:-}" ;;
   stop)  src; stop ;;
   status) src; status ;;
-  *) echo "사용: $0 {clean|run|stop|status}"; exit 1 ;;
+  *) echo "사용: $0 {clean|run [nophone]|stop|status}"; exit 1 ;;
 esac
