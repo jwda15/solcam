@@ -209,6 +209,8 @@ class GestureNode(Node):
         elif action.kind == "system":
             self.pub_system.publish(String(data=action.payload["cmd"]))
             self._run_system(action.payload["cmd"])
+        elif action.kind == "cancel":
+            pass   # No/취소 — 메뉴만 닫힘(아무 동작 없음)
         elif action.kind == "ui":
             key = action.payload["toggle"]
             self.ui_flags[key] = not self.ui_flags.get(key, False)

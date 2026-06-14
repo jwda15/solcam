@@ -251,25 +251,35 @@ def test_more_help_leaf():
     assert a.kind == "ui" and a.payload == {"toggle": "help"}
 
 
-def test_more_poweroff_confirm_2steps():
+def test_quit_dialog_yes():
     sm = make_sm(); t = _goto_more(sm)
-    t = nav(sm, "two", t)                     # Power OFF
-    evs1, _ = feed(sm, "two", t, 0.2)         # (아직 액션 아님: 확인1 진입만)
-    t = nav(sm, "one", t)                     # 확인1: Power OFF?
-    a = [e for e in feed(sm, "one", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.kind == "system" and a.payload == {"cmd": "shutdown"}
-
-
-def test_more_quit_confirm_1step():
-    sm = make_sm(); t = _goto_more(sm)
-    t = nav(sm, "three", t)                   # SolCam Quit
-    a = [e for e in feed(sm, "one", t, 1.6)[0] if e.kind == "action"][0].action
+    t = nav(sm, "three", t)                    # SolCam Quit → 다이얼로그
+    assert sm.snapshot()["dialog"] == "Quit SolCam?"
+    a = [e for e in feed(sm, "two", t, 1.6)[0] if e.kind == "action"][0].action  # 2 Yes
     assert a.kind == "system" and a.payload == {"cmd": "quit"}
 
 
-def test_poweroff_cancel_with_dislike():
+def test_quit_dialog_no_cancels():
     sm = make_sm(); t = _goto_more(sm)
-    t = nav(sm, "two", t)                      # Power OFF (확인1 진입)
-    evs, _ = feed(sm, "dislike", t, 1.6)       # 역따봉 = 취소(뒤로)
-    assert "navigate" in [e.kind for e in evs]
-    assert not [e for e in evs if e.kind == "action"]
+    t = nav(sm, "three", t)
+    evs, _ = feed(sm, "one", t, 1.6)           # 1 No
+    acts = [e for e in evs if e.kind == "action"]
+    assert acts and acts[0].action.kind == "cancel"
+    assert sm.state == "IDLE"                   # No=단발 → 메뉴 닫힘
+
+
+def test_poweroff_dialog_two_steps():
+    sm = make_sm(); t = _goto_more(sm)
+    t = nav(sm, "two", t)                       # Power OFF → 다이얼로그1
+    assert sm.snapshot()["dialog"] == "Power off the robot?"
+    t = nav(sm, "two", t)                       # 2 Yes → 다이얼로그2
+    assert sm.snapshot()["dialog"] == "SolCam will shut down. Proceed?"
+    a = [e for e in feed(sm, "one", t, 1.6)[0] if e.kind == "action"][0].action  # 1 Yes
+    assert a.kind == "system" and a.payload == {"cmd": "shutdown"}
+
+
+def test_poweroff_dialog1_no_cancels():
+    sm = make_sm(); t = _goto_more(sm)
+    t = nav(sm, "two", t)                       # Power OFF 다이얼로그1
+    evs, _ = feed(sm, "one", t, 1.6)           # 1 No
+    assert [e for e in evs if e.kind == "action"][0].action.kind == "cancel"

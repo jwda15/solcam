@@ -64,6 +64,11 @@ class Hud:
         if snapshot.get("ui_flags", {}).get("help"):
             self._draw_help(scr, w, h)
             return
+        # 중앙 확인 다이얼로그 (Power OFF / SolCam Quit). 숫자 유지=선택, K=취소(뒤로).
+        if snapshot.get("state") == "MENU" and snapshot.get("dialog"):
+            self._draw_dialog(scr, w, h, snapshot)
+            self._draw_flash(scr)
+            return
         # ★상단바(모드/배터리/REC) 숨김 — 작은 LCD 화면 깔끔하게.
         if snapshot.get("state") == "MENU":
             self._draw_dock(scr, w, h, snapshot, recording, zoom)
@@ -72,6 +77,32 @@ class Hud:
             if snapshot.get("hold_gesture") == "like":
                 self._gauge(scr, w // 2, h - 44, float(snapshot.get("hold_progress", 0.0)))
         self._draw_flash(scr)
+
+    def _draw_dialog(self, scr, w, h, snap):
+        pg = self.pg
+        s = pg.Surface((w, h), pg.SRCALPHA)
+        pg.draw.rect(s, (13, 15, 18, 222), s.get_rect())
+        scr.blit(s, (0, 0))
+        self._center(scr, snap.get("dialog", ""), self.f_mid, WHITE, h // 2 - 78)
+        items = snap.get("items", [])
+        hold_g = snap.get("hold_gesture", "")
+        prog = float(snap.get("hold_progress", 0.0))
+        cw, ch, gap = 180, 58, 28
+        n = len(items)
+        x0 = (w - (n * cw + (n - 1) * gap)) // 2
+        y = h // 2 - 18
+        self._last_rects = {}
+        for i, it in enumerate(items):
+            rect = pg.Rect(x0 + i * (cw + gap), y, cw, ch)
+            self._last_rects[it["gesture"]] = rect
+            active = (it["gesture"] == hold_g and prog > 0)
+            self._panel(scr, rect, (255, 255, 255), 22)
+            self._border(scr, rect, BASE_BORDER, 255, 2)
+            if active:
+                self._border_fill_lr(scr, rect, prog, FILL, 255, 3)
+            self._card_text(scr, rect, it, WHITE if active else DIM, WHITE if active else DIM)
+        self._center(scr, "hold a number to choose  -  K to cancel",
+                     self.f_small, HINT, y + ch + 26)
 
     def _draw_help(self, scr, w, h):
         pg = self.pg

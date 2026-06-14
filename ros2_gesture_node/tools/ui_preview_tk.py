@@ -318,6 +318,11 @@ class Preview:
         if self.help:
             self._draw_help_overlay()
             return
+        if snap.get("state") == "MENU" and snap.get("dialog"):
+            self._detect_confirm(snap)
+            self._draw_dialog(snap)
+            self._draw_flash()
+            return
         self._detect_confirm(snap)
         # 상단바 숨김(작은 LCD 깔끔하게)
         if snap.get("state") == "MENU":
@@ -370,6 +375,34 @@ class Preview:
             c.create_text(x, 24, text=txt, anchor="e", fill=REC_RED, font=self.f_rec)
             dot_x = x - self.f_rec.measure(txt) - 11
             c.create_oval(dot_x-4, 20, dot_x+4, 28, fill=REC_RED, outline="")
+
+    def _draw_dialog(self, snap):
+        c = self.cv
+        c.create_rectangle(0, 0, W, H, fill=BG, outline="")
+        c.create_text(W // 2, H // 2 - 80, text=snap.get("dialog", ""),
+                      fill=WHITE, font=("Segoe UI", 20, "bold"))
+        items = snap.get("items", [])
+        hold_g = snap.get("hold_gesture", "")
+        prog = snap.get("hold_progress", 0.0)
+        cw, ch, gap = 180, 58, 28
+        n = len(items)
+        x0 = (W - (n * cw + (n - 1) * gap)) // 2
+        y = H // 2 - 18
+        self._cards = {}
+        for i, it in enumerate(items):
+            x = x0 + i * (cw + gap)
+            self._cards[it["gesture"]] = (x, y, cw, ch)
+            active = (it["gesture"] == hold_g and prog > 0)
+            self._rrect(x, y, cw, ch, 12, fill=CARD, outline="")
+            self._rrect(x, y, cw, ch, 12, fill="", outline=BASE, width=2)
+            if active:
+                self._border_lr(x, y, cw, ch, min(1.0, prog))
+            c.create_text(x + cw // 2, y + ch // 2,
+                          text=f"{GNUM.get(it['gesture'], '')}  {it['label']}",
+                          fill=WHITE, font=("Segoe UI", 16, "bold"))
+        c.create_text(W // 2, y + ch + 28,
+                      text="hold 1/2 to choose   -   K to cancel",
+                      fill=DIM, font=("Segoe UI", 11))
 
     def _draw_help_overlay(self):
         c = self.cv

@@ -56,6 +56,7 @@ class MenuNode:
     label: str
     children: Optional[Dict[str, "MenuNode"]] = None   # 제스처 → 자식
     action: Optional[Action] = None                    # 리프면 동작
+    dialog: Optional[str] = None                        # 설정 시 중앙 확인 다이얼로그(프롬프트)
 
     @property
     def is_leaf(self) -> bool:
@@ -126,17 +127,21 @@ def build_menu(p: dict) -> MenuNode:
             "three": MenuNode("Rec", action=Action("phone", "Rec", {"cmd": "record_toggle"})),
             "four":  MenuNode("More", children={      # 시스템: 도움말/전원/종료
                 "one":   MenuNode("Help", action=Action("ui", "Help", {"toggle": "help"})),
-                # Power OFF: 2단계 재확인(각 단계 손가락 유지=예 / 역따봉=취소)
-                "two":   MenuNode("Power OFF", children={
-                    "one": MenuNode("Power OFF?", children={
-                        "one": MenuNode("정말 끕니다",
-                                        action=Action("system", "Power OFF", {"cmd": "shutdown"})),
+                # Power OFF: 중앙 다이얼로그 2단계. 선택지 위치 교차(1 No/2 Yes → 1 Yes/2 No)
+                "two":   MenuNode("Power OFF",
+                                  dialog="Power off the robot?", children={
+                    "one": MenuNode("No",  action=Action("cancel", "No", {})),
+                    "two": MenuNode("Yes",
+                                    dialog="SolCam will shut down. Proceed?", children={
+                        "one": MenuNode("Yes", action=Action("system", "Power OFF", {"cmd": "shutdown"})),
+                        "two": MenuNode("No",  action=Action("cancel", "No", {})),
                     }),
                 }),
-                # SolCam Quit: 1단계 재확인
-                "three": MenuNode("SolCam Quit", children={
-                    "one": MenuNode("종료할까요?",
-                                    action=Action("system", "SolCam Quit", {"cmd": "quit"})),
+                # SolCam Quit: 중앙 다이얼로그 1단계
+                "three": MenuNode("SolCam Quit",
+                                  dialog="Quit SolCam?", children={
+                    "one": MenuNode("No",  action=Action("cancel", "No", {})),
+                    "two": MenuNode("Yes", action=Action("system", "SolCam Quit", {"cmd": "quit"})),
                 }),
             }),
         }),
@@ -212,6 +217,7 @@ class MenuStateMachine:
             progress = min(1.0, (self._last_seen - self._hold_start) / need)
         return {
             "state": self.state,
+            "dialog": (cur.dialog if cur else None),
             "path": [n.label for n in self.path],
             "items": items,
             "hold_gesture": self._cand or "",
