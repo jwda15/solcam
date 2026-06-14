@@ -23,6 +23,7 @@ SCRCPY_DIR="${SCRCPY_DIR:-$HOME/scrcpy_bin/scrcpy-linux-x86_64-v4.0}"
 SCRCPY_BIN="${SCRCPY_BIN:-$SCRCPY_DIR/scrcpy}"
 ADB_BIN="${ADB_BIN:-$SCRCPY_DIR/adb}"
 LOG="${SOLCAM_LOG:-/tmp/solcam}"
+FULLSCREEN="${SOLCAM_FULLSCREEN:-true}"   # LCD 전체화면. 개발 PC면 SOLCAM_FULLSCREEN=false
 export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-/run/user/$(id -u)/gdm/Xauthority}"
 
@@ -107,8 +108,8 @@ run() {
   # ★UI 먼저 — 폰 영상이 없어도(또는 nophone) 즉시 뜬다. ui_node 는 /phone/image 가
   #  없으면 OAK 영상/플레이스홀더로 렌더하므로 블로킹/검은멈춤 없음. 폰은 나중에
   #  붙어도 late-join 으로 자동 표시된다.
-  echo "[run] 3) ui_node (LCD, $LOG/ui.log) — 폰 없어도 바로 뜸(OAK/검정 배경)"
-  ros2 run ros2_gesture_node ui_node --ros-args -p fullscreen:=false >"$LOG/ui.log" 2>&1 &
+  echo "[run] 3) ui_node (LCD 전체화면=$FULLSCREEN, $LOG/ui.log) — 폰 없어도 바로 뜸"
+  ros2 run ros2_gesture_node ui_node --ros-args -p fullscreen:=$FULLSCREEN >"$LOG/ui.log" 2>&1 &
 
   if [ "$phone" = 1 ]; then
     echo "[run] 4) phone_bridge (managed scrcpy + 자동복구, $LOG/phone.log)"
