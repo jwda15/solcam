@@ -42,3 +42,50 @@
 [남은 일]
   - 실기 포즈 임계값 튜닝(특히 쓰리건/엄지). 불안정 시 자전을 숫자 서브로 폴백.
   - FOLLOW2/ORBIT 리셋을 rel0 재캡처로 확장(제어 노드 지원).
+
+========================================================================
+ 0615 추가 작업 (같은 날, A~D 이후)
+========================================================================
+
+[E] 2D 제어 시뮬(control_sim.py) — FOLLOW2/ORBIT 추가 + 상대각 유지
+  - 시뮬에 모드3 FOLLOW2(leash 단방향), 모드4 ORBIT(공전) 버튼/거동 이식.
+  - FOLLOW2/ORBIT 도 [A]의 "주인 기준 상대각(rel0) 유지" 반영 → 시뮬에서 몸체가
+    이동/공전 중 진입 자세 유지하는지 눈으로 확인 가능.
+  - 모드 전환 시 D항 스파이크(_fresh 플래그) 수정. g++ test_sim 24 PASS.
+
+[F] 드라이버(STM32) 점검 문서 + 실측 체크리스트
+  - driver_firmware/YAW_점검.md: 팀원 "yaw 한 방향만" 진단 — 방향 로직은 정상,
+    클럭은 16MHz로 "일관"이라 버그 아님(프리스케일러 16-1=1MHz tick). 한 방향
+    원인은 이전버전/배선(DIR핀) 가능성. 재플래시 필요. yaw 느리면 TIM7 Period.
+  - 드라이버_실측_체크리스트.md: encoder_cpr·휠 순서/부호·DOF 방향·yaw 영점/부호·
+    리프트·통합 FOLLOW·안전. (STM 연결 후 순서대로)
+
+[G] 손동작 UI 추가 개편
+  - 상단바(모드/배터리/REC) 숨김 — 작은 LCD 깔끔하게.
+  - Other 재구성: 1 Phone · 2 OAK view · 3 Rec · 4 More(1 Help · 2 Power OFF · 3 SolCam Quit).
+  - 종료 동작 실제 구현: Power OFF=poweroff, SolCam Quit=solcam.sh stop.
+  - 종료 확인: 영어 중앙 다이얼로그. Quit='Quit SolCam?'(1No/2Yes),
+    Power OFF='Power off the robot?'(1No/2Yes)→'SolCam will shut down. Proceed?'(1Yes/2No).
+    선택지 위치 교차로 오발동 방지. 역따봉=취소. (MenuNode.dialog 필드)
+  - Help: 중앙 오버레이 토글, 역따봉(K)으로 닫기(내용은 추후).
+  - poweroff sudoers(NOPASSWD) 추가(systemctl 막힐 때 대비).
+
+[H] 기동/배포 UX
+  - solcam.sh: 폰 영상 없어도 UI 즉시 기동(ui_node를 폰보다 먼저, 폰 대기는
+    백그라운드). 'solcam run nophone'(또는 SOLCAM_PHONE=0)로 폰 전부 생략.
+  - ui_node: 폰 없으면 메뉴에서도 OAK 전체 배경(검은 PHONE 반쪽 방지).
+  - LCD 전체화면 기본값(SOLCAM_FULLSCREEN, 기본 true). 아이콘 누르면 바로 전체화면.
+  - 잿슨 바탕화면 런처: scripts/desktop/install_desktop.sh → 'SolCam 시작/정지' 아이콘
+    (시작=setsid -f 로 세션분리, 런처 종료해도 노드 생존). 자동시작 안내 포함.
+  - 윈도우 런처: scripts/desktop/SolCam_UI_preview.bat(콘솔없이 UI 프리뷰),
+    Install_Windows_Icon.bat → 바탕화면 'SolCam' 바로가기.
+
+[I] 시그니처 로고(브랜드)
+  - 제미나이 생성 원본(image/icon/SolCamDog.png: 골든리트리버+목줄 카메라)을
+    potrace로 깔끔한 벡터화 → image/icon/solcam_logo.svg(#1e90ff, 목줄·카메라·다리선
+    네거티브스페이스) + solcam_logo.png(투명).
+  - 모든 아이콘 통일: scripts/desktop/solcam.svg(잿슨), solcam.ico(윈도우 바로가기).
+
+[남은 일]
+  - 실기 MediaPipe 포즈 임계값 튜닝(쓰리건/엄지). Help 내용 작성.
+  - 드라이버 STM 연결 후 실측 체크리스트 수행. ROS2 빌드(잿슨)에서 C++ 변경 반영.
