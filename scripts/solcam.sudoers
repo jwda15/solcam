@@ -11,3 +11,5 @@
 #
 # 아래 'jw' 를 본인 사용자명으로 바꾸세요. 인자(video_nr)는 * 로 허용.
 jw ALL=(root) NOPASSWD: /usr/local/sbin/solcam_reset_v4l2.sh *
+# 손동작 Power OFF(재확인 2회 후) 가 비번 없이 종료하도록 허용.
+jw ALL=(root) NOPASSWD: /sbin/poweroff, /usr/sbin/poweroff, /usr/bin/systemctl poweroff

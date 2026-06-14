@@ -251,13 +251,25 @@ def test_more_help_leaf():
     assert a.kind == "ui" and a.payload == {"toggle": "help"}
 
 
-def test_more_poweroff_leaf():
+def test_more_poweroff_confirm_2steps():
     sm = make_sm(); t = _goto_more(sm)
-    a = [e for e in feed(sm, "two", t, 1.6)[0] if e.kind == "action"][0].action
+    t = nav(sm, "two", t)                     # Power OFF
+    evs1, _ = feed(sm, "two", t, 0.2)         # (아직 액션 아님: 확인1 진입만)
+    t = nav(sm, "one", t)                     # 확인1: Power OFF?
+    a = [e for e in feed(sm, "one", t, 1.6)[0] if e.kind == "action"][0].action
     assert a.kind == "system" and a.payload == {"cmd": "shutdown"}
 
 
-def test_more_quit_leaf():
+def test_more_quit_confirm_1step():
     sm = make_sm(); t = _goto_more(sm)
-    a = [e for e in feed(sm, "three", t, 1.6)[0] if e.kind == "action"][0].action
+    t = nav(sm, "three", t)                   # SolCam Quit
+    a = [e for e in feed(sm, "one", t, 1.6)[0] if e.kind == "action"][0].action
     assert a.kind == "system" and a.payload == {"cmd": "quit"}
+
+
+def test_poweroff_cancel_with_dislike():
+    sm = make_sm(); t = _goto_more(sm)
+    t = nav(sm, "two", t)                      # Power OFF (확인1 진입)
+    evs, _ = feed(sm, "dislike", t, 1.6)       # 역따봉 = 취소(뒤로)
+    assert "navigate" in [e.kind for e in evs]
+    assert not [e for e in evs if e.kind == "action"]

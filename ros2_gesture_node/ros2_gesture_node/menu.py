@@ -125,9 +125,19 @@ def build_menu(p: dict) -> MenuNode:
             "two":   MenuNode("OAK view", action=Action("ui", "OAK view", {"toggle": "oak_view"})),
             "three": MenuNode("Rec", action=Action("phone", "Rec", {"cmd": "record_toggle"})),
             "four":  MenuNode("More", children={      # 시스템: 도움말/전원/종료
-                "one":   MenuNode("Help",        action=Action("ui", "Help", {"toggle": "help"})),
-                "two":   MenuNode("Power OFF",   action=Action("system", "Power OFF",   {"cmd": "shutdown"})),
-                "three": MenuNode("SolCam Quit", action=Action("system", "SolCam Quit", {"cmd": "quit"})),
+                "one":   MenuNode("Help", action=Action("ui", "Help", {"toggle": "help"})),
+                # Power OFF: 2단계 재확인(각 단계 손가락 유지=예 / 역따봉=취소)
+                "two":   MenuNode("Power OFF", children={
+                    "one": MenuNode("Power OFF?", children={
+                        "one": MenuNode("정말 끕니다",
+                                        action=Action("system", "Power OFF", {"cmd": "shutdown"})),
+                    }),
+                }),
+                # SolCam Quit: 1단계 재확인
+                "three": MenuNode("SolCam Quit", children={
+                    "one": MenuNode("종료할까요?",
+                                    action=Action("system", "SolCam Quit", {"cmd": "quit"})),
+                }),
             }),
         }),
     })
