@@ -233,6 +233,31 @@ def test_record_toggle_leaf():
     sm = make_sm()
     t = open_menu(sm)
     t = nav(sm, "four", t)                        # Other
-    evs, _ = feed(sm, "four", t, 1.6)            # Rec
+    evs, _ = feed(sm, "three", t, 1.6)           # Rec (이제 3번)
     a = [e for e in evs if e.kind == "action"][0].action
     assert a.kind == "phone" and a.payload["cmd"] == "record_toggle"
+
+
+def _goto_more(sm):
+    t = open_menu(sm)
+    t = nav(sm, "four", t)                        # Other
+    t = nav(sm, "four", t)                        # More
+    return t
+
+
+def test_more_help_leaf():
+    sm = make_sm(); t = _goto_more(sm)
+    a = [e for e in feed(sm, "one", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.kind == "ui" and a.payload == {"toggle": "help"}
+
+
+def test_more_poweroff_leaf():
+    sm = make_sm(); t = _goto_more(sm)
+    a = [e for e in feed(sm, "two", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.kind == "system" and a.payload == {"cmd": "shutdown"}
+
+
+def test_more_quit_leaf():
+    sm = make_sm(); t = _goto_more(sm)
+    a = [e for e in feed(sm, "three", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.kind == "system" and a.payload == {"cmd": "quit"}

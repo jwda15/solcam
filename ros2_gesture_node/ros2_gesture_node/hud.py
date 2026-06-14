@@ -60,15 +60,27 @@ class Hud:
         w, h = scr.get_size()
         self._detect_confirm(snapshot)
         self._draw_video(scr, w, h, frame, oak_frame, split)
-        self._draw_topbar(scr, w, mode, battery, recording, rec_start)
+        # 도움말 오버레이 (Other>More>Help). 역따봉(K)으로 닫음 → gesture_node가 처리.
+        if snapshot.get("ui_flags", {}).get("help"):
+            self._draw_help(scr, w, h)
+            return
+        # ★상단바(모드/배터리/REC) 숨김 — 작은 LCD 화면 깔끔하게.
         if snapshot.get("state") == "MENU":
             self._draw_dock(scr, w, h, snapshot, recording, zoom)
         else:
             self._hint(scr, w, h, "thumbs-up to open")
-            # 따봉 게이지
             if snapshot.get("hold_gesture") == "like":
                 self._gauge(scr, w // 2, h - 44, float(snapshot.get("hold_progress", 0.0)))
         self._draw_flash(scr)
+
+    def _draw_help(self, scr, w, h):
+        pg = self.pg
+        s = pg.Surface((w, h), pg.SRCALPHA)
+        pg.draw.rect(s, (13, 15, 18, 215), s.get_rect())
+        scr.blit(s, (0, 0))
+        self._center(scr, "SolCam Help", self.f_mid, WHITE, h // 2 - 70)
+        self._center(scr, "(도움말 내용 준비 중)", self.f_small, DIM, h // 2 - 24)
+        self._center(scr, "reverse thumbs-up (K) to close", self.f_small, HINT, h // 2 + 24)
 
     # ----- 단발 확정 흰 반짝 (progress 하강 엣지, 연속 jog 제외) -----
     def _detect_confirm(self, snap):

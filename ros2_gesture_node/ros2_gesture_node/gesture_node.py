@@ -18,6 +18,8 @@
 """
 import json
 import math
+import os
+import subprocess
 
 import numpy as np
 import rclpy
@@ -28,7 +30,7 @@ from sensor_msgs.msg import Image
 
 from ros2_control_node.msg import AdjustCmd
 
-from .menu import MenuStateMachine, build_menu
+from .menu import MenuStateMachine, build_menu, BACK, TRIGGER
 from .recognizer import (MediaPipeHandsRecognizer, HagridYoloRecognizer,
                          MockRecognizer)
 
@@ -63,6 +65,7 @@ class GestureNode(Node):
         #  orbit: 검지 좌=CCW(+φ)  /  spin: 쓰리건 우=CCW(+off), 좌=CW(−off)
         self.declare_parameter("orbit_sign", 1.0)
         self.declare_parameter("spin_sign", 1.0)
+        self.declare_parameter("repo_dir", os.environ.get("SOLCAM_REPO", os.path.expanduser("~/solcam")))
         gp = lambda n: self.get_parameter(n).value
 
         # ----- 부품 조립 (부호까지 반영한 스텝을 메뉴에 전달) -----
@@ -165,8 +168,17 @@ class GestureNode(Node):
     # ----- 사건 → 토픽 ----------------------------------------------------
     def _step(self, raw_label, t):
         label = self._to_menu_label(raw_label)
+        # 도움말 오버레이 표시 중: 메뉴 입력 차단, 역따봉(뒤로)/따봉으로 닫기.
+        if self.ui_flags.get("help"):
+            if label in (BACK, TRIGGER):
+                self.ui_flags["help"] = False
+            self._publish_ui()
+            return
         for ev in self.sm.update(label, t):
             self._handle(ev)
+        self._publish_ui()
+
+    def _publish_ui(self):
         snap = self.sm.snapshot()
         snap["ui_flags"] = self.ui_flags
         self.pub_ui.publish(String(data=json.dumps(snap, ensure_ascii=False)))
@@ -196,9 +208,25 @@ class GestureNode(Node):
             self.pub_phone.publish(String(data=action.payload["cmd"]))
         elif action.kind == "system":
             self.pub_system.publish(String(data=action.payload["cmd"]))
+            self._run_system(action.payload["cmd"])
         elif action.kind == "ui":
             key = action.payload["toggle"]
             self.ui_flags[key] = not self.ui_flags.get(key, False)
+
+    def _run_system(self, cmd):
+        """전원/종료 실제 실행. (메뉴 Other>More 안쪽이라 오발동 위험 낮음)"""
+        try:
+            if cmd == "shutdown":
+                self.get_logger().warn("로봇 전원 OFF → poweroff")
+                subprocess.Popen(["bash", "-lc", "systemctl poweroff || sudo -n poweroff"])
+            elif cmd == "quit":
+                repo = str(self.get_parameter("repo_dir").value)
+                sh = os.path.join(repo, "scripts", "solcam.sh")
+                self.get_logger().warn(f"SolCam 종료 → {sh} stop")
+                subprocess.Popen(["bash", sh, "stop"],
+                                 start_new_session=True)   # 자기 자신도 정리되므로 분리
+        except Exception as e:
+            self.get_logger().error(f"system 명령 실패({cmd}): {e}")
 
 
 def main(args=None):

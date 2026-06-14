@@ -192,6 +192,7 @@ class Preview:
         self._cam_tmp = os.path.join(tempfile.gettempdir(), "solcam_preview.ppm")
 
         self.held = None
+        self.help = False
         self._rel_job = None
         self._cards = {}                 # gesture -> (x,y,w,h)  (직전 프레임)
         self._prev_prog = 0.0
@@ -241,12 +242,20 @@ class Preview:
     # ---- 메인 루프 (~30fps) ----
     def _loop(self):
         t = time.time() - self.t0
-        for ev in self.sm.update(self.held, t):
-            if ev.kind == "action" and ev.action and ev.action.kind == "mode":
-                self.mode = ev.action.payload.get("mode", self.mode)
-            elif (ev.kind == "action" and ev.action and ev.action.kind == "phone"
-                  and ev.action.payload.get("cmd") == "record_toggle"):
-                self._toggle_rec()   # 프리뷰: 폰 대신 직접 토글(라벨 ON/OFF 확인용)
+        if self.help:
+            if self.held in ("dislike", "like"):    # 역따봉/따봉 → 도움말 닫기
+                self.help = False
+        else:
+            for ev in self.sm.update(self.held, t):
+                if ev.kind == "action" and ev.action and ev.action.kind == "mode":
+                    self.mode = ev.action.payload.get("mode", self.mode)
+                elif (ev.kind == "action" and ev.action and ev.action.kind == "phone"
+                      and ev.action.payload.get("cmd") == "record_toggle"):
+                    self._toggle_rec()
+                elif (ev.kind == "action" and ev.action and ev.action.kind == "ui"
+                      and ev.action.payload.get("toggle") == "help"):
+                    self.help = True
+                # system(Power OFF/SolCam Quit)은 프리뷰에선 실행 안 함(안전)
         self._draw(self.sm.snapshot())
         self.win.after(33, self._loop)
 
@@ -303,8 +312,11 @@ class Preview:
                     msg = "camera failed - see console"
             c.create_text(W//2, H//2, text=msg, fill="#2a2f37",
                           font=("Segoe UI", 26, "bold"))
+        if self.help:
+            self._draw_help_overlay()
+            return
         self._detect_confirm(snap)
-        self._topbar()
+        # 상단바 숨김(작은 LCD 깔끔하게)
         if snap.get("state") == "MENU":
             self._dock(snap)
         else:
@@ -355,6 +367,16 @@ class Preview:
             c.create_text(x, 24, text=txt, anchor="e", fill=REC_RED, font=self.f_rec)
             dot_x = x - self.f_rec.measure(txt) - 11
             c.create_oval(dot_x-4, 20, dot_x+4, 28, fill=REC_RED, outline="")
+
+    def _draw_help_overlay(self):
+        c = self.cv
+        c.create_rectangle(0, 0, W, H, fill=BG, outline="")
+        c.create_text(W//2, H//2 - 40, text="SolCam Help", fill=WHITE,
+                      font=("Segoe UI", 28, "bold"))
+        c.create_text(W//2, H//2 + 6, text="(도움말 내용 준비 중)", fill=DIM,
+                      font=("Segoe UI", 14))
+        c.create_text(W//2, H//2 + 46, text="K (역따봉) 로 닫기", fill=DIM,
+                      font=("Segoe UI", 12))
 
     def _gauge(self, cx, cy, frac):
         if frac <= 0: return

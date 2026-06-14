@@ -22,7 +22,7 @@
   ② Wheel   검지 ←/→ 공전(좌=CCW·우=CW)   검지 ↑/↓ 거리(상=멀리·하=가까이)
             쓰리건 ←/→ 자전(좌=CW·우=CCW)  V(두 손가락) = 촬영방향 주인 리셋
   ③ Lift    검지 ↑/↓ = 올림/내림
-  ④ Other   1 Phone(1 Zoom+·2 Zoom-) · 2 OAK view · 3 Power off · 4 Rec  ← 손가락 개수
+  ④ Other   1 Phone(Zoom±) · 2 OAK view · 3 Rec · 4 More(1 Help · 2 Power OFF · 3 SolCam Quit)
   거꾸로 따봉 = 한 단계 뒤로(메인에서는 닫기)
 ```
 
@@ -34,6 +34,9 @@
 선택 = 제스처 1.5초 유지. 방향/조절 항목(공전·자전·거리·리프트·줌)은 발동 후
 손을 유지하면 짧은 주기로 연속(jog) 실행된다. 카테고리 진입 직후에는 손을 뗄
 때까지 같은 제스처를 무시해 "들고 있다가 두 단계 연속 선택"을 막는다.
+
+LCD는 작은 화면이라 상단바(모드/배터리/REC)는 숨김. Power OFF=로봇 전원,
+SolCam Quit=`solcam stop`, Help=도움말(역따봉으로 닫기)은 Other>More 안에 있다.
 
 ## 토픽
 
