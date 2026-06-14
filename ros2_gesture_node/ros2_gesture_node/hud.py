@@ -22,6 +22,9 @@ import time
 MODE_NAMES = {0: "IDLE", 1: "FOLLOW", 2: "ROTATE", 3: "FOLLOW2",
               4: "ORBIT", 5: "MODE 5"}
 GESTURE_NUM = {"one": "1", "two": "2", "three": "3", "four": "4"}
+# 방향 카드 글리프(권총 방향+자전). two(=V)는 휠에서 리셋 → 'V'.
+GSYM = {"p_up": "\u2191", "p_down": "\u2193", "p_left": "\u2190", "p_right": "\u2192",
+        "gun_left": "\u21bb", "gun_right": "\u21ba", "two": "V"}
 
 # 테마 (흰 70 / 파랑 20 / 검정 10) — 테마 블루 #1e90ff
 ACCENT = (30, 144, 255)      # 파랑 (테두리 차오름 + 게이지)
@@ -40,6 +43,10 @@ class Hud:
         self.pg = pygame
         self.f_mid = pygame.font.Font(None, 30)
         self.f_small = pygame.font.Font(None, 24)
+        try:   # 화살표/회전 글리프가 있는 시스템 폰트(잿슨 우분투 기본)
+            self.f_sym = pygame.font.SysFont("dejavusans", 34, bold=True)
+        except Exception:
+            self.f_sym = pygame.font.Font(None, 36)
         self._prev_prog = 0.0
         self._prev_hold = ""
         self._prev_repeating = False
@@ -165,41 +172,49 @@ class Hud:
         items = snap.get("items", [])
         if not items:
             return
-        n = len(items)
-        cw, gap, ch = 150, 12, 64
-        x0 = (w - (n * cw + (n - 1) * gap)) // 2
-        y0 = h - ch - 34
         hold_g = snap.get("hold_gesture", "")
         prog = float(snap.get("hold_progress", 0.0))
         repeating = bool(snap.get("repeating", False))
-        oak_on = bool(snap.get("ui_flags", {}).get("oak_view", False))   # OAK view(이분할) 토글 상태
+        oak_on = bool(snap.get("ui_flags", {}).get("oak_view", False))
+        # 방향 메뉴(Wheel/Lift)면 글리프 카드, 아니면 숫자+라벨 카드
+        directional = any(it["gesture"].startswith("p_") for it in items)
+        n = len(items)
+        cw, gap, ch = (92, 10, 78) if directional else (150, 12, 64)
+        x0 = (w - (n * cw + (n - 1) * gap)) // 2
+        y0 = h - ch - 34
         self._last_rects = {}
         for i, it in enumerate(items):
             rect = pg.Rect(x0 + i * (cw + gap), y0, cw, ch)
             self._last_rects[it["gesture"]] = rect
             active = (it["gesture"] == hold_g and prog > 0)
-            disp = it
-            if it["label"] == "Rec":   # 녹화 토글: 상태에 따라 ON/OFF 표시
-                disp = {"gesture": it["gesture"],
-                        "label": "Rec OFF" if recording else "Rec ON"}
-            elif it["label"] == "OAK view":   # 이분할(OAK) 토글: 상태에 따라 ON/OFF 표시
-                disp = {"gesture": it["gesture"],
-                        "label": "OAK OFF" if oak_on else "OAK ON"}
+            label = it["label"]
+            if label == "Rec":
+                label = "Rec OFF" if recording else "Rec ON"
+            elif label == "OAK view":
+                label = "OAK OFF" if oak_on else "OAK ON"
             if active and repeating:
-                self._panel(scr, rect, (255, 255, 255), 245)       # 연속=흰 카드
-                self._card_text(scr, rect, disp, INK, INK)
+                self._panel(scr, rect, (255, 255, 255), 245); col = INK
             else:
                 self._panel(scr, rect, (255, 255, 255), 22)
                 self._border(scr, rect, BASE_BORDER, 255, 2)
                 if active:
-                    self._border_fill_lr(scr, rect, prog, FILL, 255, 3)  # 파랑 좌→우
-                self._card_text(scr, rect, disp, WHITE if active else DIM, WHITE)
+                    self._border_fill_lr(scr, rect, prog, FILL, 255, 3)
+                col = WHITE if active else DIM
+            if directional:
+                self._dir_card(scr, rect, it["gesture"], label, col)
+            else:
+                self._card_text(scr, rect, {"gesture": it["gesture"], "label": label}, col, col)
             if active and it["label"].startswith("Zoom"):
-                self._zoom_badge(scr, rect, zoom)   # 손 떼면 적용될 목표 배율(xN)
-        # 거꾸로 따봉(back) 게이지 — 카드 위 중앙
+                self._zoom_badge(scr, rect, zoom)
         if hold_g == "dislike":
             self._gauge(scr, w // 2, y0 - 16, prog)
         self._hint(scr, w, h, "reverse thumbs-up to go back")
+
+    def _dir_card(self, scr, rect, gesture, label, col):
+        g = self.f_sym.render(GSYM.get(gesture, "?"), True, col)
+        scr.blit(g, (rect.x + (rect.w - g.get_width()) // 2, rect.y + 8))
+        s = self.f_small.render(label, True, col)
+        scr.blit(s, (rect.x + (rect.w - s.get_width()) // 2, rect.y + rect.h - 24))
 
     # ----- 헬퍼 -----
     def _panel(self, scr, rect, color, alpha):

@@ -1,101 +1,101 @@
 # ros2_gesture_node
 
-손동작 supervisor. OAK RGB 영상에서 HaGRID 제스처를 인식해 계층 메뉴를
-운영하고, 결과를 제어 노드 토픽으로 발행한다. LCD(7인치 HDMI) UI 포함.
+손동작 supervisor. OAK RGB 영상에서 **MediaPipe Hands(손 21관절)** 로 제스처를
+인식해 계층 메뉴를 운영하고, 결과를 제어 노드 토픽으로 발행한다. LCD UI 포함.
+
+## 인식 (0615 개편: 방향 손동작)
+
+손 관절로 포즈+방향을 읽어 **양손 인식, 손바닥/손등 무관**(손가락 방향만 본다).
+
+- 따봉(like) 1.5초 → 메뉴 열림. 거꾸로 따봉(dislike) = 뒤로/닫기. 10초 무입력 = 닫기.
+- **권총(검지)** 의 가리키는 방향(↑↓←→) 으로 Wheel/Lift 를 직관적으로 조작.
+- **쓰리건(엄지+검지+중지)** 좌우로 자전.
+- 손가락 개수(1~4)는 목록 선택(Mode/Other/메인)에만 쓴다.
+  ※ 단일 검지는 인식기에선 "방향(point_*)"으로만 나오고, 손가락-개수 맥락에선
+    노드가 'one'(=검지 1개)으로 문맥 변환한다.
 
 ## 메뉴 구조
 
-따봉(like) 1.5초 유지 → 메뉴 열림(몸체 감속 정지) → 손가락 개수로 선택.
-palm은 모드번호 five와 헷갈려 메뉴 번호는 one~four만 쓴다.
-
 ```
-like 1.5s ─▶ 메인 메뉴
-  one    주행 모드   1 Idle · 2 Follow · 3 Rotate · 4 More(1 Follow2 · 2 Orbit)
-  two    Wheel(구도) 1 Distance(1 Farther · 2 Closer)
-                     2 Bearing (1 CCW · 2 CW)      ← 공전: 거리 유지하며 주인 주위 원운동
-                     3 Pan     (1 Pan L · 2 Pan R) ← 촬영 카메라 헤딩 오프셋
-  three  리프트      1 Up · 2 Down
-  four   촬영·시스템 1 Phone(1 Zoom+ · 2 Zoom-) · 2 OAK view · 3 Power off · 4 Rec
-  dislike(거꾸로 따봉)  한 단계 뒤로 (메인에서는 닫기) / 10초 무입력 = 자동 취소
+따봉 1.5s ─▶ 메인 (몸체 감속 정지)
+  ① Mode    1 Idle · 2 Follow · 3 Rotate · 4 More(1 Follow2 · 2 Orbit)   ← 손가락 개수
+  ② Wheel   검지 ←/→ 공전(좌=CCW·우=CW)   검지 ↑/↓ 거리(상=멀리·하=가까이)
+            쓰리건 ←/→ 자전(좌=CW·우=CCW)  V(두 손가락) = 촬영방향 주인 리셋
+  ③ Lift    검지 ↑/↓ = 올림/내림
+  ④ Other   1 Phone(1 Zoom+·2 Zoom-) · 2 OAK view · 3 Power off · 4 Rec  ← 손가락 개수
+  거꾸로 따봉 = 한 단계 뒤로(메인에서는 닫기)
 ```
 
-Bearing(공전)은 모드1(FOLLOW)에서만 의미가 있다. `SEG_ANGLE`(φ)을 바꾸면
-목표점이 `주인 − D·(cosφ,sinφ)`라 거리 D를 유지하며 주인 주위를 돈다. 이때
-몸체는 계속 주인을 향하고(필요시 Pan 오프셋만큼 비틀린 채로), 상단 yaw(OAK)는
-주인을 락온해서 — 공전 중에도 카메라가 주인을 계속 본다.
+공전(Wheel ←/→)은 `SEG_ANGLE`(φ), 자전(쓰리건)은 `HEADING_OFFSET`, 거리는
+`SEG_DISTANCE`, 리셋은 `HEADING_OFFSET` 절대 0. 방향 부호는 "주인 시점에서
+자연스러움" 기준(좌 공전=CCW, 좌 자전=CW)이며, 실차에서 반대면
+`gesture_params.yaml` 의 `orbit_sign`/`spin_sign` 만 −1.0 으로 뒤집으면 된다.
 
-선택 = 제스처 1.5초 유지. 조절 항목(거리·헤딩·리프트·줌)은 실행 후 메뉴에
-머물러 손을 유지하면 1.5초마다 반복 실행된다. 카테고리 진입 직후에는
-손을 뗄 때까지 같은 제스처를 무시해 "들고 있다가 두 단계 연속 선택"을 막는다.
+선택 = 제스처 1.5초 유지. 방향/조절 항목(공전·자전·거리·리프트·줌)은 발동 후
+손을 유지하면 짧은 주기로 연속(jog) 실행된다. 카테고리 진입 직후에는 손을 뗄
+때까지 같은 제스처를 무시해 "들고 있다가 두 단계 연속 선택"을 막는다.
 
 ## 토픽
 
 - 구독: `/oak/rgb/image_raw` (oak_detector `publish_rgb:=true`),
   `/gesture_mock` (mock 모드 주입용)
 - 발행: `/gesture_active`(Bool), `/control_mode`(Int32),
-  `/adjust_cmd`(AdjustCmd), `/phone_cmd`·`/system_cmd`(String, 자리만),
+  `/adjust_cmd`(AdjustCmd), `/phone_cmd`·`/system_cmd`(String),
   `/gesture_ui`(String JSON — LCD UI/디버그)
 
 ## 파일
 
 | 파일 | 역할 |
 |------|------|
-| `menu.py` | 메뉴 트리 정의(`build_menu`) + 상태기계. ROS 무관 — 항목 추가는 여기만 |
-| `recognizer.py` | HaGRID YOLO 인식기(ultralytics) + Mock. HaGRID 클래스 별칭 통합 |
-| `gesture_node.py` | ROS 입출력. 인식 → 상태기계 → 사건을 토픽으로 번역 |
-| `hud.py` | UI 렌더(ROS 무관) — ui_node와 프리뷰 공용 |
-| `ui_node.py` | LCD UI(pygame). 영상 배경 + 하단 메뉴 독(보라 fill + 흰 플래시), 모드·REC·배터리 |
-| `config/gesture_params.yaml` | 유지시간·조절폭 등 파라미터 전부 |
-| `test/test_menu.py` | 상태기계 단위테스트 10건 (ROS 불필요) |
+| `menu.py` | 메뉴 트리(`build_menu`)+상태기계. 방향 키(p_up/…, gun_*, two)로 라우팅. ROS 무관 |
+| `recognizer.py` | **MediaPipeHandsRecognizer**(포즈+방향) / Mock / (구)HaGRID |
+| `gesture_node.py` | ROS 입출력 + 문맥변환(point_* → p_* 또는 one) |
+| `hud.py` | UI 렌더(ROS 무관) — 방향 메뉴는 글리프 카드, 개수 메뉴는 숫자 카드 |
+| `ui_node.py` | LCD UI(pygame) |
+| `config/gesture_params.yaml` | 유지시간·조절폭·방향부호 등 |
+| `test/test_menu.py` | 상태기계 단위테스트 18건 (ROS 불필요) |
 
 ## 준비물
 
 ```bash
-pip install "ultralytics>=8.2" pygame   # mock 모드는 둘 다 불필요
-./models/download.sh                     # YOLOv10n_gestures.pt (22MB)
-# 모델 라이선스: CC BY-SA 4.0 변형 (hagrid 저장소 license/ 참조) → 깃에 커밋 금지
+pip install mediapipe        # 손 21관절. ★Python 3.8~3.12 (3.14 휠 없음). 잿슨 OK.
+# mock/미리보기는 mediapipe 불필요.
 ```
 
-## UI 미리보기 (Windows/PC, ROS 불필요)
+## UI 미리보기 (PC, ROS·MediaPipe 불필요)
 
-LCD 화면을 ROS 없이 키보드로 확인:
+MediaPipe 가 안 깔리는 환경(예: Python 3.14)에서도 키보드로 동작 확인:
 
 ```bash
-pip install pygame numpy
-cd ros2_gesture_node
-python tools/ui_preview.py
+python tools/ui_preview_tk.py        # 설치 전혀 불필요(tkinter 기본 포함)
 ```
-L=따봉(메뉴 열기) · 1~4=선택(꾹) · K=거꾸로 따봉(뒤로/닫기) · R=REC · B=배터리 · ESC.
 
-pygame 설치가 안 되면(예: Python 3.14처럼 최신이라 pygame wheel이 아직 없으면)
-설치가 전혀 필요 없는 tkinter 버전을 쓴다 — 키/동작 동일:
-
-```bash
-python tools/ui_preview_tk.py
+조작(키보드로 손동작 흉내):
 ```
-실제 상태기계(menu.py)를 그대로 써서 동작·타이밍이 LCD와 동일하다
-(배경 영상만 없으면 CAMERA 표시).
+L = 따봉(메뉴 열기)      K = 거꾸로 따봉(뒤로/닫기)
+1~4 = 손가락 개수(Mode/Other 선택)
+↑↓←→ = 권총 방향(Wheel/Lift)   Z/X = 쓰리건 자전 좌/우   2 = V(휠 리셋)
+R = 녹화 토글   B = 배터리--   ESC = 종료
+```
 
-### 폰 카메라를 배경에 깔기 (Windows)
-
-폰을 윈도우에서 웹캠으로 잡으면(안드 14+ USB 웹캠 모드, 또는 DroidCam/Iriun)
-프리뷰 배경에 실제 폰 영상이 깔린다. cv2/pygame 불필요 — ffmpeg만 쓴다:
+실제 상태기계(menu.py)를 그대로 써서 동작·타이밍이 LCD와 동일하다.
+폰 카메라를 배경에 까는 방법은 `--camera` 옵션(아래) 참고.
 
 ```bash
-pip install imageio-ffmpeg                       # ffmpeg 바이너리 자동(또는 시스템 ffmpeg)
-python tools/ui_preview_tk.py --list-cameras     # 장치 이름 확인
-python tools/ui_preview_tk.py --camera "장치이름"  # 그 카메라를 배경으로
+python tools/ui_preview_tk.py --list-cameras       # 장치 이름
+python tools/ui_preview_tk.py --camera "장치이름"   # 배경에 폰 영상
 ```
 
 ## 실행
 
 ```bash
-# 모델·카메라 없이 전체 체인 테스트 (mock)
+# 모델·카메라 없이 전체 체인 테스트 (mock — canonical 라벨 주입)
 ros2 launch ros2_gesture_node gesture.launch.py recognizer:=mock ui:=false
-ros2 topic pub /gesture_mock std_msgs/String "data: like" -r 5   # 따봉 주입
-ros2 topic echo /gesture_ui                                       # 상태 확인
+ros2 topic pub /gesture_mock std_msgs/String "data: like" -r 5      # 따봉
+ros2 topic pub /gesture_mock std_msgs/String "data: point_left" -r 5 # 방향
+ros2 topic echo /gesture_ui
 
-# 실기
+# 실기 (MediaPipe)
 ros2 launch ros2_gesture_node gesture.launch.py
 
 # 상태기계 단위테스트
@@ -104,7 +104,9 @@ python3 -m pytest test/test_menu.py -v
 
 ## TODO
 
-- 주인 bbox ROI 크롭 (행인 손 무시) — owner bbox 토픽 합의 후
-- 2~3m 거리 실측 테스트 (512×384 프리뷰로 부족하면 OAK 고해상 스트림 추가)
-- LCD UI 디자인 다듬기 + 촬영 카메라(폰) 미러링
-- /phone_cmd, /system_cmd 수신측 구현
+- 실기 카메라에서 포즈 임계값(특히 쓰리건·엄지 폄) 튜닝. 불안정하면 자전을
+  Wheel 안 숫자 서브카테고리로 빼는 폴백.
+- 주인 bbox ROI 크롭(행인 손 무시) — owner bbox 토픽 합의 후.
+- FOLLOW2/ORBIT 에서 "촬영방향 리셋"(현재 FOLLOW용 HEADING_OFFSET=0)을
+  rel0 재캡처(=주인 정면)로 확장하려면 제어 노드 지원 추가.
+- /phone_cmd·/system_cmd 수신측 구현.

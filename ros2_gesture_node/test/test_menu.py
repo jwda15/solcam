@@ -1,14 +1,13 @@
-"""메뉴 상태기계 단위테스트 — ROS 없이 실행:
+"""메뉴 상태기계 단위테스트 (방향 손동작 개편판) — ROS 없이:
     cd ros2_gesture_node && python3 -m pytest test/test_menu.py -v
-시간을 직접 주입해 유지/끊김/타임아웃 시나리오를 결정적으로 검증한다.
 """
-import sys, os
+import sys, os, math
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ros2_gesture_node.menu import MenuStateMachine, build_menu
 
-STEPS = {"dist_step": 0.3, "bearing_step_deg": 8.0,
-         "heading_step_deg": 15.0, "lift_step": 0.1}
+STEPS = {"dist_step": 0.3, "seg_angle_step": math.radians(8.0),
+         "heading_step": math.radians(15.0), "lift_step": 0.1}
 
 
 def make_sm():
@@ -17,7 +16,6 @@ def make_sm():
 
 
 def feed(sm, gesture, t0, dur, dt=0.1):
-    """gesture를 t0부터 dur초 동안 dt 간격으로 공급, 모든 이벤트 수집."""
     evs, t = [], t0
     while t <= t0 + dur + 1e-9:
         evs += sm.update(gesture, t)
@@ -29,90 +27,158 @@ def kinds(evs):
     return [e.kind for e in evs]
 
 
+def open_menu(sm):
+    feed(sm, "like", 0.0, 1.7)
+    assert sm.state == "MENU"
+    feed(sm, None, 1.8, 0.1)
+    return 2.0
+
+
+def nav(sm, key, t, dur=1.6):
+    """카테고리 진입(또는 항목 선택). 진입 후 손 떼기까지 처리하고 다음 t 반환."""
+    feed(sm, key, t, dur)
+    t += dur + 0.1
+    feed(sm, None, t, 0.1); t += 0.2
+    return t
+
+
+# ---------- 메뉴 열기/유지 ----------
 def test_trigger_opens_menu():
     sm = make_sm()
-    evs, _ = feed(sm, "like", 0.0, 1.4)          # 1.4초: 아직
+    evs, _ = feed(sm, "like", 0.0, 1.4)
     assert sm.state == "IDLE" and not evs
-    evs, _ = feed(sm, "like", 1.5, 0.2)          # 누적 1.6초 → 열림
+    evs, _ = feed(sm, "like", 1.5, 0.2)
     assert "open" in kinds(evs) and sm.state == "MENU"
 
 
 def test_short_like_ignored():
     sm = make_sm()
-    feed(sm, "like", 0.0, 1.0)                   # 1.0초만 유지
-    feed(sm, None, 1.1, 1.0)                     # 끊김 (dropout 초과 → 리셋)
-    evs, _ = feed(sm, "like", 3.0, 1.0)          # 다시 1.0초 — 합산되면 안 됨
+    feed(sm, "like", 0.0, 1.0)
+    feed(sm, None, 1.1, 1.0)
+    evs, _ = feed(sm, "like", 3.0, 1.0)
     assert sm.state == "IDLE" and not evs
 
 
 def test_dropout_tolerated():
     sm = make_sm()
     feed(sm, "like", 0.0, 0.8)
-    feed(sm, None, 0.9, 0.2)                     # 0.3초 끊김 (< 0.4 허용)
-    evs, _ = feed(sm, "like", 1.2, 0.8)          # 이어서 유지 → 총 2.0초
+    feed(sm, None, 0.9, 0.2)
+    evs, _ = feed(sm, "like", 1.2, 0.8)
     assert sm.state == "MENU"
 
 
-def open_menu(sm):
-    feed(sm, "like", 0.0, 1.7)
-    assert sm.state == "MENU"
-    feed(sm, None, 1.8, 0.1)                     # 따봉 릴리즈
-    return 2.0
-
-
+# ---------- 모드(손가락 개수) ----------
 def test_navigate_and_mode_action():
     sm = make_sm()
     t = open_menu(sm)
-    evs, t = feed(sm, "one", t, 1.6)             # Mode 카테고리
-    assert "navigate" in kinds(evs)
-    feed(sm, None, t, 0.1); t += 0.2             # 릴리즈
-    evs, t = feed(sm, "three", t, 1.6)           # Rotate(모드2) 선택 (Idle/Follow/Rotate 순)
+    t = nav(sm, "one", t)                         # Mode 카테고리
+    assert sm.path[-1].label == "Mode"
+    evs, t = feed(sm, "three", t, 1.6)            # Rotate(모드2)
     acts = [e for e in evs if e.kind == "action"]
     assert acts and acts[0].action.payload == {"mode": 2}
-    assert "close" in kinds(evs) and sm.state == "IDLE"   # stay=False → 닫힘
+    assert "close" in kinds(evs) and sm.state == "IDLE"
 
 
-def test_stay_item_repeats_while_held():
-    """모터 조작(stay): 최초 1.5초 발동 후 손을 뗄 때까지 연속(jog)으로
-    같은 명령을 계속 낸다."""
+def test_more_submodes():
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "two", t, 1.6)               # Wheel(차체 이동) 진입
-    feed(sm, None, t, 0.1); t += 0.2
-    _, t = feed(sm, "one", t, 1.6)               # Distance 카테고리 진입
-    feed(sm, None, t, 0.1); t += 0.2
-    evs, t = feed(sm, "one", t, 3.2)             # 'Farther' 3.2초 유지
+    t = nav(sm, "one", t)                         # Mode
+    t = nav(sm, "four", t)                        # More
+    evs, t = feed(sm, "two", t, 1.6)              # Orbit(모드4)
     acts = [e for e in evs if e.kind == "action"]
-    assert len(acts) >= 5                        # 1.5초 후 연속 반복 → 다수
-    assert all(a.action.payload["param"] == "SEG_DISTANCE" for a in acts)
-    assert sm.snapshot()["hold_progress"] == 1.0  # 연속 중 게이지 꽉 참
-    assert sm.state == "MENU"                    # stay=True → 메뉴 유지
+    assert acts and acts[0].action.payload == {"mode": 4}
 
 
-def test_stay_repeat_stops_on_release():
-    """손을 떼면 연속이 멈추고, 다시 들면 1.5초 재무장이 필요하다."""
+# ---------- 휠: 방향(권총) 공전/거리 ----------
+def test_wheel_orbit_directions():
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "two", t, 1.6)               # Wheel
-    feed(sm, None, t, 0.1); t += 0.2
-    _, t = feed(sm, "one", t, 1.6)               # Distance 카테고리 진입
-    feed(sm, None, t, 0.1); t += 0.2
-    _, t = feed(sm, "one", t, 1.8)               # Farther 무장 + 연속 시작
-    evs, t = feed(sm, None, t, 0.6)              # 손 뗌 → 연속 정지
+    t = nav(sm, "two", t)                         # Wheel
+    assert sm.path[-1].label == "Wheel"
+    evs, t = feed(sm, "p_left", t, 1.6)           # 좌 = 공전 CCW(+φ)
+    acts = [e for e in evs if e.kind == "action"]
+    assert acts and acts[0].action.payload["param"] == "SEG_ANGLE"
+    assert acts[0].action.payload["value"] > 0    # CCW = +
+    assert sm.state == "MENU"                      # stay=True → 유지
+    feed(sm, None, t, 0.5); t += 0.6
+    evs, t = feed(sm, "p_right", t, 1.6)          # 우 = 공전 CW(−φ)
+    acts = [e for e in evs if e.kind == "action"]
+    assert acts and acts[0].action.payload["value"] < 0
+
+
+def test_wheel_distance_directions():
+    sm = make_sm()
+    t = open_menu(sm)
+    t = nav(sm, "two", t)                         # Wheel
+    evs, t = feed(sm, "p_up", t, 1.6)             # 상 = 멀어지기(+)
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.payload["param"] == "SEG_DISTANCE" and a.payload["value"] > 0
+    feed(sm, None, t, 0.5); t += 0.6
+    evs, t = feed(sm, "p_down", t, 1.6)           # 하 = 가까이(−)
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.payload["param"] == "SEG_DISTANCE" and a.payload["value"] < 0
+
+
+def test_wheel_spin_gun():
+    sm = make_sm()
+    t = open_menu(sm)
+    t = nav(sm, "two", t)                         # Wheel
+    evs, t = feed(sm, "gun_left", t, 1.6)         # 좌 = 자전 CW(−off)
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.payload["param"] == "HEADING_OFFSET" and a.payload["value"] < 0
+    feed(sm, None, t, 0.5); t += 0.6
+    evs, t = feed(sm, "gun_right", t, 1.6)        # 우 = 자전 CCW(+off)
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.payload["param"] == "HEADING_OFFSET" and a.payload["value"] > 0
+
+
+def test_wheel_reset_face_owner():
+    sm = make_sm()
+    t = open_menu(sm)
+    t = nav(sm, "two", t)                         # Wheel
+    evs, t = feed(sm, "two", t, 1.6)              # V = 촬영방향 리셋(단발)
+    acts = [e for e in evs if e.kind == "action"]
+    assert acts and acts[0].action.payload == {
+        "param": "HEADING_OFFSET", "value": 0.0, "delta": False}
+    assert acts[0].action.stay is False           # 연속 아님
+
+
+def test_wheel_jog_repeats_and_stops():
+    sm = make_sm()
+    t = open_menu(sm)
+    t = nav(sm, "two", t)                         # Wheel
+    evs, t = feed(sm, "p_left", t, 3.2)           # 공전 3.2초 유지
+    acts = [e for e in evs if e.kind == "action"]
+    assert len(acts) >= 5                         # 연속 발동
+    assert sm.snapshot()["hold_progress"] == 1.0
+    evs, t = feed(sm, None, t, 0.6)               # 손 뗌 → 정지
     assert sm.snapshot()["hold_progress"] == 0.0
-    evs, t = feed(sm, "one", t, 0.5)             # 0.5초만 → 재무장 안 됨
-    assert not [e for e in evs if e.kind == "action"]
 
 
+# ---------- 리프트: 방향(권총) ----------
+def test_lift_directions():
+    sm = make_sm()
+    t = open_menu(sm)
+    t = nav(sm, "three", t)                       # Lift
+    assert sm.path[-1].label == "Lift"
+    evs, t = feed(sm, "p_up", t, 1.6)
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.payload["param"] == "LIFT_HEIGHT" and a.payload["value"] > 0
+    feed(sm, None, t, 0.5); t += 0.6
+    evs, t = feed(sm, "p_down", t, 1.6)
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.payload["param"] == "LIFT_HEIGHT" and a.payload["value"] < 0
+
+
+# ---------- 뒤로/타임아웃/오인식 ----------
 def test_dislike_back_then_close():
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "three", t, 1.6)             # 리프트 진입
-    feed(sm, None, t, 0.1); t += 0.2
-    evs, t = feed(sm, "dislike", t, 1.6)            # 거꾸로따봉 뒤로 → 메인
+    t = nav(sm, "three", t)                       # Lift 진입
+    evs, t = feed(sm, "dislike", t, 1.6)          # 뒤로 → 메인
     assert "navigate" in kinds(evs) and sm.state == "MENU"
     feed(sm, None, t, 0.1); t += 0.2
-    evs, t = feed(sm, "dislike", t, 1.6)            # 메인에서 거꾸로따봉 → 닫기
+    evs, t = feed(sm, "dislike", t, 1.6)          # 메인에서 → 닫기
     close = [e for e in evs if e.kind == "close"]
     assert close and close[0].reason == "back" and sm.state == "IDLE"
 
@@ -120,67 +186,53 @@ def test_dislike_back_then_close():
 def test_timeout_closes():
     sm = make_sm()
     t = open_menu(sm)
-    evs, _ = feed(sm, None, t, 10.5)             # 10초 넘게 무입력
+    evs, _ = feed(sm, None, t, 10.5)
     close = [e for e in evs if e.kind == "close"]
     assert close and close[0].reason == "timeout" and sm.state == "IDLE"
 
 
 def test_no_double_select_without_release():
-    """카테고리 진입 후 같은 제스처를 계속 들고 있어도 하위 항목이
-    자동 선택되면 안 된다 (릴리즈 요구)."""
     sm = make_sm()
     t = open_menu(sm)
-    evs, t = feed(sm, "one", t, 4.0)             # 4초 내내 'one' 유지
+    evs, t = feed(sm, "one", t, 4.0)              # Mode 진입 후 계속 유지
     acts = [e for e in evs if e.kind == "action"]
-    assert not acts                              # 팔로우(하위 1번) 자동선택 금지
+    assert not acts                               # 하위 자동선택 금지
     assert sm.path[-1].label == "Mode"
 
 
 def test_invalid_gesture_in_menu_ignored():
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "three", t, 1.6)             # 리프트 (항목 1,2뿐)
-    feed(sm, None, t, 0.1); t += 0.2
-    evs, _ = feed(sm, "four", t, 2.0)            # 없는 항목 → 무시
+    t = nav(sm, "three", t)                       # Lift (p_up/p_down만)
+    evs, _ = feed(sm, "four", t, 2.0)             # 없는 키 → 무시
     assert not [e for e in evs if e.kind == "action"]
     assert sm.state == "MENU"
 
 
-def test_phone_and_system_leaves():
+def test_point_ignored_at_main():
+    """메인 메뉴에서는 방향 권총이 자식 키가 아니라 무시된다."""
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "four", t, 1.6)              # Other (촬영·시스템)
-    feed(sm, None, t, 0.1); t += 0.2
-    _, t = feed(sm, "one", t, 1.6)               # 폰 카메라
-    feed(sm, None, t, 0.1); t += 0.2
-    evs, _ = feed(sm, "one", t, 1.6)             # 줌 +
-    acts = [e for e in evs if e.kind == "action"]
-    assert acts and acts[0].action.kind == "phone"
-    assert acts[0].action.payload["cmd"] == "zoom_in"
+    evs, _ = feed(sm, "p_up", t, 2.0)
+    assert not [e for e in evs if e.kind == "action"]
+    assert sm.path[-1].label == "Main"
 
 
-def test_bearing_orbit_emits_seg_angle():
-    """Wheel > Bearing > CCW = 공전(SEG_ANGLE +). stay라 연속 발동."""
+# ---------- 아더(손가락 개수) ----------
+def test_phone_zoom_leaf():
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "two", t, 1.6)               # Wheel 진입
-    feed(sm, None, t, 0.1); t += 0.2
-    _, t = feed(sm, "two", t, 1.6)               # Bearing 카테고리 진입
-    feed(sm, None, t, 0.1); t += 0.2
-    evs, t = feed(sm, "one", t, 2.0)             # CCW 유지 → 공전
-    acts = [e for e in evs if e.kind == "action"]
-    assert acts and all(a.action.payload["param"] == "SEG_ANGLE" for a in acts)
-    assert all(a.action.payload["value"] > 0 for a in acts)   # CCW = +φ
-    assert sm.state == "MENU"                    # stay=True → 메뉴 유지
+    t = nav(sm, "four", t)                        # Other
+    t = nav(sm, "one", t)                         # Phone
+    evs, _ = feed(sm, "one", t, 1.6)             # Zoom +
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.kind == "phone" and a.payload["cmd"] == "zoom_in"
 
 
 def test_record_toggle_leaf():
-    """메인 4번(Other)의 Rec = 폰 촬영 시작/종료 토글."""
     sm = make_sm()
     t = open_menu(sm)
-    _, t = feed(sm, "four", t, 1.6)              # Other 진입
-    feed(sm, None, t, 0.1); t += 0.2
+    t = nav(sm, "four", t)                        # Other
     evs, _ = feed(sm, "four", t, 1.6)            # Rec
-    acts = [e for e in evs if e.kind == "action"]
-    assert acts and acts[0].action.kind == "phone"
-    assert acts[0].action.payload["cmd"] == "record_toggle"
+    a = [e for e in evs if e.kind == "action"][0].action
+    assert a.kind == "phone" and a.payload["cmd"] == "record_toggle"

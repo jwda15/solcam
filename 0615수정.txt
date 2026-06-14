@@ -1,0 +1,44 @@
+========================================================================
+ 0615 수정내역 — 손동작 UI/제스처 방향 체계 개편 + FOLLOW2/ORBIT 몸체회전
+========================================================================
+
+[A] 컨트롤 노드: FOLLOW2(모드3)·ORBIT(모드4) 몸체가 주인 기준 상대각 유지
+  - 진입 시 rel0 = theta_head - azimuth(몸체기준 주인방향) 캡처.
+  - 매 스텝 (dir-rel0)를 yaw_pid_(base PD)로 → wz. ORBIT은 공전각속도
+    (orbit_speed/반지름) 피드포워드 추가 + w_body_max 클램프.
+  - 효과: 이동/공전 중에도 진입 자세(주인 정면이면 정면, 측면이면 그 면)를
+    몸체장착 촬영카메라가 유지. (이전엔 wz=0이라 몸체 고정 = 카메라 안 따라감)
+  - 파일: src/follow2_controller.cpp/.hpp, src/orbit_controller.cpp/.hpp
+  - control_sim.py 동일 반영. test_sim T15a 갱신 + T15e 추가 → 24 PASS.
+
+[B] 손동작 인식: HaGRID(클래스만) → MediaPipe Hands(21관절) 전환
+  - 손가락 방향(↑↓←→)·양손·손바닥/손등 무관 인식 가능.
+  - recognizer.py: MediaPipeHandsRecognizer 신설(포즈+방향). Mock 유지
+    (canonical 라벨 주입). (구)HaGRID 는 호환용 잔존.
+  - ★MediaPipe 는 Python 3.8~3.12 (지금 PC의 3.14 휠 없음). 잿슨 OK.
+    PC 미리보기는 tk 프리뷰(키보드)로.
+
+[C] 메뉴 체계(방향 손동작)
+  - 상단 유지: 따봉→① Mode ② Wheel ③ Lift ④ Other (손가락 개수).
+  - Wheel: 검지 ←/→ 공전(좌CCW/우CW, SEG_ANGLE) · 검지 ↑/↓ 거리(상멀리/하가까이,
+           SEG_DISTANCE) · 쓰리건 ←/→ 자전(좌CW/우CCW, HEADING_OFFSET) ·
+           V(두손가락) 촬영방향 주인 리셋(HEADING_OFFSET 절대0).
+  - Lift: 검지 ↑/↓ 올림/내림.
+  - Mode/Other: 손가락 개수(목록 선택).
+  - 부호: gesture_params.yaml orbit_sign/spin_sign 으로 실차에서 뒤집기.
+  - 문맥변환(gesture_node): 단일 검지는 인식기에서 방향(point_*)으로만 나오고,
+    개수 맥락(Mode/Other/메인)에선 'one'으로, 방향 맥락(Wheel/Lift)에선 p_*로.
+
+[D] UI
+  - hud.py / ui_preview_tk.py / ui_preview.py: 방향 메뉴는 글리프 카드
+    (↑↓←→ ↻↺ V), 개수 메뉴는 숫자 카드로 분기. 프리뷰 키보드에 방향키
+    (↑↓←→), 자전(Z/X), 리셋(2) 추가.
+
+[검증]
+  - test/test_menu.py 18건 PASS (새 트리/방향 라벨).
+  - recognizer _classify 합성 랜드마크 11포즈 11/11 OK(임계값 실기 튜닝 필요).
+  - 노드 문맥변환 로직 검증(IDLE point→무시, Main point→one, Wheel point→p_*).
+
+[남은 일]
+  - 실기 포즈 임계값 튜닝(특히 쓰리건/엄지). 불안정 시 자전을 숫자 서브로 폴백.
+  - FOLLOW2/ORBIT 리셋을 rel0 재캡처로 확장(제어 노드 지원).

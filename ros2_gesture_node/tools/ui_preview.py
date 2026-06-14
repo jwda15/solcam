@@ -27,10 +27,16 @@ import pygame
 from ros2_gesture_node.menu import MenuStateMachine, build_menu
 from ros2_gesture_node.hud import Hud
 
-STEPS = {"dist_step": 0.3, "bearing_step_deg": 8.0,
-         "heading_step_deg": 15.0, "lift_step": 0.1}
-KEY_GESTURE = {pygame.K_l: "like", pygame.K_1: "one", pygame.K_2: "two",
-               pygame.K_3: "three", pygame.K_4: "four", pygame.K_p: "palm"}
+import math
+_D = math.pi / 180.0
+STEPS = {"dist_step": 0.3, "seg_angle_step": 8.0 * _D,
+         "heading_step": 15.0 * _D, "lift_step": 0.1}
+# 방향 = 화살표, 자전 = Z/X, 리셋 = 2, 뒤로 = K
+KEY_GESTURE = {pygame.K_l: "like", pygame.K_k: "dislike",
+               pygame.K_1: "one", pygame.K_2: "two", pygame.K_3: "three", pygame.K_4: "four",
+               pygame.K_UP: "p_up", pygame.K_DOWN: "p_down",
+               pygame.K_LEFT: "p_left", pygame.K_RIGHT: "p_right",
+               pygame.K_z: "gun_left", pygame.K_x: "gun_right"}
 
 
 def current_gesture():
@@ -44,7 +50,7 @@ def current_gesture():
 def main():
     pygame.init()
     screen = pygame.display.set_mode((1024, 600))
-    pygame.display.set_caption("solcam LCD preview — L=따봉 1~4=선택 P=손바닥 R=REC B=batt ESC=종료")
+    pygame.display.set_caption("solcam LCD preview — L=메뉴 1~4=개수 화살표=방향 Z/X=자전 K=뒤로 R=REC ESC")
     sm = MenuStateMachine(build_menu(STEPS))
     hud = Hud(pygame)
     clock = pygame.time.Clock()
