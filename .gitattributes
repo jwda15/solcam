@@ -1,0 +1,13 @@
+# ============================================================================
+#  GitHub Linguist 언어 통계 보정 — 서드파티/생성 코드는 통계에서 제외.
+#  (파일은 그대로 둠. 통계만 실제 우리 코드 비율을 반영하게 함.)
+# ============================================================================
+
+# STM32 펌웨어의 벤더 라이브러리(HAL/CMSIS) — CubeIDE 자동 포함, 우리가 쓴 코드 아님
+driver_firmware/Drivers/**            linguist-vendored
+driver_firmware/**/*.s                linguist-vendored
+driver_firmware/**/startup_*.s        linguist-vendored
+
+# CMake/colcon 빌드 산출물(저장소에 들어온 경우) — 통계 제외
+build/**       linguist-generated
+build_old/**   linguist-generated
