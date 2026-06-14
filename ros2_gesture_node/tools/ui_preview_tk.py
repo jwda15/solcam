@@ -255,7 +255,10 @@ class Preview:
                 elif (ev.kind == "action" and ev.action and ev.action.kind == "ui"
                       and ev.action.payload.get("toggle") == "help"):
                     self.help = True
-                # system(Power OFF/SolCam Quit)은 프리뷰에선 실행 안 함(안전)
+                elif (ev.kind == "action" and ev.action and ev.action.kind == "system"
+                      and ev.action.payload.get("cmd") == "quit"):
+                    self._quit(); return     # 프리뷰는 UI만 → Quit = 창 닫기
+                # Power OFF는 프리뷰(PC)에선 실행 안 함(실제 잿슨에서만 poweroff)
         self._draw(self.sm.snapshot())
         self.win.after(33, self._loop)
 
