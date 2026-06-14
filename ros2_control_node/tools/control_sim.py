@@ -120,6 +120,7 @@ class Sim:
         self.leash = LEASH_DISTANCE  # 모드3 목표 거리
         self.orbit_r = self.D        # 모드4 반지름(진입 시 캡처)
         self.orbit_ccw = ORBIT_CCW
+        self.rel0 = 0.0          # 모드3·4 진입 때 캡처할 주인기준 상대각
         self.vgx = self.vgy = self.wz = 0.0
         self.pex = self.pey = 0.0
         self.pyerr = 0.0
@@ -197,12 +198,15 @@ class Sim:
     def set_mode(self, m):
         self.mode = m
         self._fresh = True       # 진입 첫 스텝 D항 스파이크 방지(모드 전환 튐 수정)
+        bearing = math.atan2(self.oy - self.ry, self.ox - self.rx)
         if m == 1:   # FOLLOW 진입 = 현재 선분(D, φ) 캡처 → 목표점=현재위치(오차0)
             self.D = max(1e-3, math.hypot(self.ox - self.rx, self.oy - self.ry))
-            self.phi = math.atan2(self.oy - self.ry, self.ox - self.rx)
+            self.phi = bearing
             self.pex = self.pey = 0.0
         elif m == 4:  # ORBIT 진입 = 그 순간 거리를 반지름으로 캡처
             self.orbit_r = max(1e-3, math.hypot(self.ox - self.rx, self.oy - self.ry))
+        if m in (3, 4):  # 진입 순간 '주인 기준 로봇 상대각' 캡처 → 이동/공전 중 유지
+            self.rel0 = wrap(bearing - self.yaw)
 
     def flip_orbit(self):       # 공전 방향 토글(CCW↔CW)
         self.orbit_ccw = not self.orbit_ccw
@@ -271,7 +275,7 @@ class Sim:
             if vn > V_MAX:                          # 벡터크기 상한(applySafetyLimits)
                 vgx *= V_MAX / vn; vgy *= V_MAX / vn
 
-        if self.mode in (1, 2):   # 몸체 yaw: 주인 향함 + 오프셋 (3·4는 wz=0)
+        if self.mode in (1, 2):   # 몸체 yaw: 주인 향함 + 오프셋
             desired = wrap((bearing if FACE_OWNER else self.phi) + self.offset)
             yerr = wrap(desired - self.yaw)
             if self._fresh:                        # 진입 첫 스텝 = D항 0
@@ -279,6 +283,19 @@ class Sim:
             if abs(yerr) > BYAW_DEAD:
                 wz_des = clamp(KP_BYAW * yerr + KD_BYAW * (yerr - self.pyerr) / dt,
                                -W_BODY_MAX, W_BODY_MAX)
+            self.pyerr = yerr
+        elif self.mode in (3, 4):  # 몸체 yaw: 주인 기준 상대각(rel0) 유지
+            rel = wrap(bearing - self.yaw)         # 현재 주인의 몸체기준 방향
+            yerr = wrap(rel - self.rel0)           # 캡처한 상대각에서 벗어난 양
+            if self._fresh:
+                self.pyerr = yerr
+            ff = 0.0
+            if self.mode == 4:                     # 공전 각속도 피드포워드(지연 0)
+                v_tan = ORBIT_SPEED if self.orbit_ccw else -ORBIT_SPEED
+                ff = v_tan / max(self.orbit_r, 1e-3)
+            corr = (KP_BYAW * yerr + KD_BYAW * (yerr - self.pyerr) / dt
+                    if abs(yerr) > BYAW_DEAD else 0.0)
+            wz_des = clamp(ff + corr, -W_BODY_MAX, W_BODY_MAX)
             self.pyerr = yerr
 
         self._fresh = False

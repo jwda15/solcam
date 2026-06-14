@@ -22,6 +22,7 @@ void OrbitController::engage(const ControlInput & in)
   // 진입(선택) 시점에 주인이 보이면 그 거리를 반지름으로 캡처
   if (in.owner.is_detected && in.owner.distance > 1e-3) {
     orbit_radius_ = in.owner.distance;
+    rel0_ = wrapAngle(in.theta_head - in.owner.azimuth);  // 진입 자세(상대각)
     captured_ = true;
   }
 }
@@ -45,6 +46,7 @@ ControlCommand OrbitController::step(const ControlInput & in)
   // 진입 때 미검출이었으면 첫 유효 프레임에서 반지름 캡처
   if (!captured_ && in.owner.distance > 1e-3) {
     orbit_radius_ = in.owner.distance;
+    rel0_ = wrapAngle(in.theta_head - in.owner.azimuth);
     captured_ = true;
   }
 
@@ -64,9 +66,16 @@ ControlCommand OrbitController::step(const ControlInput & in)
   double vx_b = v_rad * std::cos(dir) + v_tan * std::sin(dir);
   double vy_b = v_rad * std::sin(dir) - v_tan * std::cos(dir);
 
-  // 몸체 yaw 제어 없음(wz=0): 게걸음 공전, 프레이밍은 상단 yaw 카메라가.
+  // ----- 몸체 yaw: 진입 때의 '주인 기준 상대각(rel0)' 유지 -----
+  //  공전으로 dir(=bearing-yaw)이 변하므로, 공전 각속도(v_tan/r)를 피드포워드로
+  //  주어 지연 없이 따라 돌고, 잔차는 base PD(yaw_pid_)로 보정 → 몸체장착
+  //  촬영카메라가 도는 내내 진입 자세(예: 정면)를 유지.
+  double wz_ff = sgn * params_.orbit_speed / std::max(orbit_radius_, 1e-3);
+  double wz = wz_ff + yaw_pid_.update(wrapAngle(dir - rel0_), in.dt);
+  wz = std::clamp(wz, -params_.w_body_max, params_.w_body_max);
+
   //  (총 속도 v_max 상한은 발행부 applySafetyLimits 가 벡터크기로 강제)
-  writeBodyCommand(cmd, vx_b, vy_b, 0.0, in.dt);
+  writeBodyCommand(cmd, vx_b, vy_b, wz, in.dt);
   return cmd;
 }
 

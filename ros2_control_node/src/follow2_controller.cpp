@@ -18,6 +18,11 @@ void Follow2Controller::onConfigure()
 void Follow2Controller::engage(const ControlInput & in)
 {
   engageCommon(in);   // 상단 yaw 목표각을 현재 스테이지 각으로 초기화
+  rel_captured_ = false;
+  if (in.owner.is_detected) {   // 진입 시 주인 기준 상대각 캡처(유지 기준)
+    rel0_ = wrapAngle(in.theta_head - in.owner.azimuth);
+    rel_captured_ = true;
+  }
 }
 
 void Follow2Controller::setLeashDistance(double value, bool delta)
@@ -54,8 +59,13 @@ ControlCommand Follow2Controller::step(const ControlInput & in)
   double vx_b = speed * std::cos(dir);   // +speed = 주인 쪽으로
   double vy_b = speed * std::sin(dir);
 
-  // 구도(헤딩) 제어 없음: wz=0. 가속(슬루) 제한만 걸어 출력.
-  writeBodyCommand(cmd, vx_b, vy_b, 0.0, in.dt);
+  // ----- 몸체 yaw: 진입 때의 '주인 기준 상대각(rel0)' 유지 -----
+  //  주인이 옆으로 이동해 dir 이 바뀌면 몸체를 같이 돌려, 진입 때 주인을
+  //  향하던(또는 특정 면을 보이던) 자세를 계속 유지. base PD(yaw_pid_) 재사용.
+  if (!rel_captured_) { rel0_ = dir; rel_captured_ = true; }
+  double wz = yaw_pid_.update(wrapAngle(dir - rel0_), in.dt);
+
+  writeBodyCommand(cmd, vx_b, vy_b, wz, in.dt);
   return cmd;
 }
 

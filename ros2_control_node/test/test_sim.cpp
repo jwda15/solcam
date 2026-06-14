@@ -168,11 +168,26 @@ static void test_orbit()
   };
   char b[140];
 
-  // 반지름에서(정면): 접선 CCW만 → vy<0(우측), vx≈0, wz=0
+  // 반지름에서(정면): 접선 CCW(vy<0) + 진입 상대각 유지 위해 몸체도 공전각속도로
+  //   회전. wz_ff = orbit_speed/R = 0.15/1.5 = +0.10 (CCW). vx≈0.
   ControlCommand c1 = run(1.5, 1.5, 0.0, 0.0);
-  std::snprintf(b,sizeof(b),"R=dist=1.5 vx=%.3f vy=%.3f(CCW=-) wz=%.3f", c1.body_vx, c1.body_vy, c1.body_yaw_rate);
-  check(std::abs(c1.body_vx)<0.02 && c1.body_vy<-0.05 && std::abs(c1.body_yaw_rate)<1e-9,
-        "T15a 반지름서 접선공전(CCW)", b);
+  std::snprintf(b,sizeof(b),"R=dist=1.5 vx=%.3f vy=%.3f(CCW=-) wz=%.3f(=공전각속도0.10)", c1.body_vx, c1.body_vy, c1.body_yaw_rate);
+  check(std::abs(c1.body_vx)<0.02 && c1.body_vy<-0.05 && std::abs(c1.body_yaw_rate-0.10)<0.02,
+        "T15a 반지름서 접선공전+몸체회전(CCW)", b);
+
+  // 상대각 보정: 진입은 정면(az=0→rel0=0), 이후 주인이 우측(az=+0.3, dir=-0.3)으로
+  //   어긋나면 몸체를 CW로 돌려(corr<0이 ff +0.1을 압도) 진입 자세로 복원 → wz<0.
+  {
+    f.reset();
+    OwnerState oe; oe.is_detected=true; oe.distance=1.5; oe.azimuth=0.0;
+    ControlInput ein; ein.owner=oe; ein.theta_head=0.0; ein.dt=dt; ein.owner_global_valid=false;
+    f.engage(ein);   // rel0 = 0 (정면)
+    OwnerState o; o.is_detected=true; o.distance=1.5; o.azimuth=0.3;   // 우측으로 어긋남
+    ControlInput in; in.owner=o; in.theta_head=0.0; in.dt=dt; in.owner_global_valid=false;
+    ControlCommand c1e; for(int i=0;i<10;i++) c1e=f.step(in);
+    std::snprintf(b,sizeof(b),"진입정면 후 az=+0.3 → wz=%.3f(<0=상대각 복원)", c1e.body_yaw_rate);
+    check(c1e.body_yaw_rate < -0.05, "T15e 진입 상대각 복원", b);
+  }
 
   // 반지름보다 멈 → 안쪽(+vx) + 접선(-vy)
   ControlCommand c2 = run(1.5, 2.0, 0.0, 0.0);

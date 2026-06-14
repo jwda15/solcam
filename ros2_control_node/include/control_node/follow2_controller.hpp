@@ -9,8 +9,10 @@
 //  특징:
 //   - ★/odom 불필요(requiresOwner=false): 글로벌 위치 추정 없이, 몸체 기준
 //     주인 방향(theta_head - azimuth)과 거리(distance)만으로 제어.
-//   - 몸체 yaw 제어 없음(wz=0): 구도를 안 잡으므로 회전하지 않고 그쪽으로
-//     이동(메카넘 게걸음)만. 상단 yaw(OAK-D/촬영)는 주인 락온 유지.
+//   - 몸체 yaw: 진입 때의 '주인 기준 상대각(rel0)'을 유지하도록 회전. 즉
+//     구도(위치)는 안 잡지만, 진입 시 주인을 향하던 자세면 계속 주인을 향하고
+//     측면을 보이던 자세면 계속 같은 면을 보인다(몸체장착 촬영카메라 기준).
+//     상단 yaw(OAK-D)는 별도로 주인 락온 유지.
 //   - 거리 데드존(leash_dead) 안이면 정지. 밖이면 밴드 끝 기준 P제어로 접근/후퇴.
 //
 //  게인/거리: params.hpp 의 leash_distance / leash_dead / kp_leash.
@@ -42,6 +44,8 @@ public:
 private:
   void onConfigure() override;     // 파라미터에서 leash_distance_ 초기화
   double leash_distance_ = 1.5;    // m, 유지할 목표 거리
+  double rel0_ = 0.0;              // rad, 진입 때 캡처한 주인 기준 몸체 상대각
+  bool   rel_captured_ = false;    // 진입/첫 유효 프레임에서 rel0_ 캡처 여부
 };
 
 }  // namespace control_node

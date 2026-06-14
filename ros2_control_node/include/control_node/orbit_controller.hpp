@@ -10,7 +10,9 @@
 //   - ★/odom 불필요(requiresOwner=false): 몸체기준 주인방향(theta_head-azimuth)
 //     + 거리(distance)만으로 접선/반지름 제어.
 //   - 반지름 = 모드 진입(선택) 시점의 주인 거리(engage 캡처). 손동작으로 조정.
-//   - 기본 반시계(CCW), 천천히(orbit_speed). 몸체 yaw 제어 없음(wz=0).
+//   - 기본 반시계(CCW), 천천히(orbit_speed). 몸체 yaw 는 진입 때의 주인 기준
+//     상대각(rel0)을 유지하도록 회전(+공전 각속도 피드포워드) → 몸체장착
+//     촬영카메라가 도는 내내 진입 자세(예: 정면)를 유지.
 //
 //  게인/속도: params.hpp 의 orbit_speed / orbit_ccw / kp_orbit_r.
 //  (정의: src/orbit_controller.cpp)
@@ -40,7 +42,8 @@ public:
 private:
   void onConfigure() override;     // 파라미터에서 폴백 반지름 초기화
   double orbit_radius_ = 1.5;      // m, 유지할 공전 반지름 (진입 시 캡처)
-  bool   captured_ = false;        // 진입 후 첫 주인 프레임에서 반지름 캡처
+  double rel0_ = 0.0;              // rad, 진입 때 캡처한 주인 기준 몸체 상대각
+  bool   captured_ = false;        // 진입 후 첫 주인 프레임에서 반지름·rel0 캡처
 };
 
 }  // namespace control_node
