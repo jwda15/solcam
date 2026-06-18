@@ -26,8 +26,10 @@ from rclpy.node import Node
 from std_msgs.msg import Int32
 from geometry_msgs.msg import Twist
 
-MODE_NAMES = {0: "IDLE(수동)", 1: "FOLLOW", 2: "ROTATE", 3: "(미구현)",
-              4: "(미구현)", 5: "(미구현)"}
+# ※ 화면 렌더는 ASCII 영문만 사용한다. pygame 기본 폰트(Font(None,...))는
+#   한글/화살표 글리프가 없어 □로 깨지기 때문. (로그도 영문 통일)
+MODE_NAMES = {0: "IDLE (manual)", 1: "FOLLOW", 2: "ROTATE", 3: "FOLLOW2",
+              4: "ORBIT", 5: "(n/a)"}
 
 
 class TeleopKeyboard(Node):
@@ -47,11 +49,12 @@ class TeleopKeyboard(Node):
         self.pg = pygame
         pygame.init()
         self.screen = pygame.display.set_mode((480, 320))
-        pygame.display.set_caption("solcam teleop — 클릭 후 조작")
+        pygame.display.set_caption("solcam teleop - click window, then use keys")
         self.font = pygame.font.Font(None, 30)
         self.font_s = pygame.font.Font(None, 22)
         self.mode_select = False     # m 오버레이 상태
         self.last_mode = None
+        self.cur_vx = self.cur_vy = self.cur_wz = 0.0   # 화면 표시용 최근 명령
         self.create_timer(period, self._tick)
 
     def _tick(self):
@@ -74,8 +77,13 @@ class TeleopKeyboard(Node):
     def _publish_velocity(self):
         pg = self.pg
         keys = pg.key.get_pressed()
-        vx = (keys[pg.K_UP] - keys[pg.K_DOWN]) * self.speed       # +전방
-        vy = (keys[pg.K_LEFT] - keys[pg.K_RIGHT]) * self.speed    # +좌측
+        # 화살표 또는 WASD(이동) — 화살표가 OS/포커스에 막히는 경우 대비 이중 매핑.
+        up    = keys[pg.K_UP]    or keys[pg.K_w]
+        down  = keys[pg.K_DOWN]  or keys[pg.K_s]
+        left  = keys[pg.K_LEFT]
+        right = keys[pg.K_RIGHT]
+        vx = (up - down) * self.speed                             # +전방
+        vy = (left - right) * self.speed                          # +좌측
         wz = (keys[pg.K_a] - keys[pg.K_d]) * self.yaw_rate        # +CCW(좌회전)
         if keys[pg.K_SPACE]:
             vx = vy = wz = 0.0
@@ -85,6 +93,7 @@ class TeleopKeyboard(Node):
         if mag > self.speed:
             vx *= self.speed / mag
             vy *= self.speed / mag
+        self.cur_vx, self.cur_vy, self.cur_wz = vx, vy, wz        # 화면 표시용
         msg = Twist()
         msg.linear.x = vx
         msg.linear.y = vy
@@ -97,7 +106,7 @@ class TeleopKeyboard(Node):
         if key in num:
             self.pub_mode.publish(Int32(data=num[key]))
             self.last_mode = num[key]
-            self.get_logger().info(f"모드 변경 → {num[key]} {MODE_NAMES.get(num[key], '')}")
+            self.get_logger().info(f"mode -> {num[key]} {MODE_NAMES.get(num[key], '')}")
             self.mode_select = False
         elif key in (pg.K_m, pg.K_ESCAPE):
             self.mode_select = False   # 취소
@@ -106,18 +115,28 @@ class TeleopKeyboard(Node):
         scr = self.screen
         scr.fill((18, 18, 22))
         if self.mode_select:
-            self._line(scr, "모드 선택 — 숫자키", self.font, 20, (90, 200, 140))
-            y = 70
+            self._line(scr, "Mode select - press number", self.font, 20, (90, 200, 140))
+            y = 64
             for k, name in MODE_NAMES.items():
-                self._line(scr, f"  {k}.  {name}", self.font_s, y, (210, 210, 210)); y += 30
-            self._line(scr, "m/esc = 취소", self.font_s, y + 6, (130, 130, 130))
+                self._line(scr, f"  {k}.  {name}", self.font_s, y, (210, 210, 210)); y += 28
+            self._line(scr, "M / Esc = cancel", self.font_s, y + 6, (130, 130, 130))
         else:
-            self._line(scr, "수동 주행 (모드0)", self.font, 16, (210, 210, 210))
-            self._line(scr, "↑↓ 전후 / ←→ 좌우 / a,d 회전", self.font_s, 56, (170, 170, 170))
-            self._line(scr, "space 정지 / m 모드선택 / esc 종료", self.font_s, 84, (170, 170, 170))
+            # 포커스 표시: pygame 창이 포커스를 가져야 키 입력이 들어온다.
+            #  "입력이 안 먹는다"의 거의 유일한 원인이라 크게 띄운다.
+            focused = bool(self.pg.key.get_focused())
+            self._line(scr, "Manual drive (mode 0)", self.font, 14, (210, 210, 210))
+            self._line(scr, "Arrows / WASD: move   A,D: rotate", self.font_s, 52, (170, 170, 170))
+            self._line(scr, "Space: stop   M: mode   Esc: quit", self.font_s, 78, (170, 170, 170))
+            if focused:
+                self._line(scr, "FOCUS: YES  (keys active)", self.font_s, 116, (90, 200, 140))
+            else:
+                self._line(scr, "FOCUS: NO  -> click this window", self.font_s, 116, (240, 120, 120))
+            # 실시간 명령값 — 키가 먹히는지 즉시 확인
+            self._line(scr, f"vx={self.cur_vx:+.2f}  vy={self.cur_vy:+.2f}  wz={self.cur_wz:+.2f}",
+                       self.font, 156, (120, 200, 240))
             if self.last_mode is not None:
-                self._line(scr, f"최근 모드: {self.last_mode} {MODE_NAMES.get(self.last_mode,'')}",
-                           self.font_s, 130, (120, 120, 120))
+                self._line(scr, f"last mode: {self.last_mode} {MODE_NAMES.get(self.last_mode,'')}",
+                           self.font_s, 200, (120, 120, 120))
         self.pg.display.flip()
 
     def _line(self, scr, txt, font, y, color):
