@@ -19,6 +19,7 @@ ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
 VIDEO_NR="${SOLCAM_VIDEO_NR:-2}"
 VIDEO_DEV="/dev/video${VIDEO_NR}"
 CAM_SIZE="${SOLCAM_CAM_SIZE:-1280x720}"
+SERIAL_DEV="${SOLCAM_SERIAL:-/dev/ttyTHS1}"   # STM 드라이버 UART (잿슨=/dev/ttyTHS1)
 SCRCPY_DIR="${SCRCPY_DIR:-$HOME/scrcpy_bin/scrcpy-linux-x86_64-v4.0}"
 SCRCPY_BIN="${SCRCPY_BIN:-$SCRCPY_DIR/scrcpy}"
 ADB_BIN="${ADB_BIN:-$SCRCPY_DIR/adb}"
@@ -32,7 +33,7 @@ RESET_SECURE=/usr/local/sbin/solcam_reset_v4l2.sh
 if [ -x "$RESET_SECURE" ]; then RESET="$RESET_SECURE"; else RESET="$REPO/scripts/reset_v4l2.sh"; fi
 RESET_CMD="sudo $RESET $VIDEO_NR"     # phone_bridge 자동복구 명령(sudoers NOPASSWD 권장)
 
-NODES=(phone_bridge gesture_node ui_node control_node oak_detector tracking_node oak_viz oak_tracking.launch gesture.launch)
+NODES=(phone_bridge gesture_node ui_node control_node driver_bridge driver.launch oak_detector tracking_node oak_viz oak_tracking.launch gesture.launch)
 
 src() { set +u; source "$ROS_SETUP"; [ -f "$WS/install/setup.bash" ] && source "$WS/install/setup.bash"; set -u; }  # ROS setup.bash 는 set -u 비안전 → 소싱 동안만 해제
 
@@ -82,12 +83,20 @@ status() {
 
 run() {
   mkdir -p "$LOG"; src
-  # 폰 사용 여부: 'run nophone' 또는 SOLCAM_PHONE=0 → 폰(scrcpy/v4l2/연동) 전부 생략.
-  #  폰은 거치만 하고 알아서 촬영, 잿슨과 영상연동 안 할 때.
-  local phone=1
-  [ "${1:-}" = "nophone" ] && phone=0
+  # 플래그(순서 무관, 조합 가능):
+  #   nophone : 폰(scrcpy/v4l2/연동) 전부 생략 — 폰 거치만 하고 영상연동 안 할 때
+  #   norobot : STM 드라이버(driver_bridge/control_node) 생략 — 개발 PC 등 STM 없을 때
+  #  환경변수 SOLCAM_PHONE=0 / SOLCAM_ROBOT=0 로도 끌 수 있다.
+  local phone=1 robot=1
+  for a in "$@"; do
+    case "$a" in
+      nophone) phone=0 ;;
+      norobot) robot=0 ;;
+    esac
+  done
   [ "${SOLCAM_PHONE:-1}" = "0" ] && phone=0
-  echo "[run] DISPLAY=$DISPLAY  WS=$WS  VIDEO=$VIDEO_DEV  phone=$phone"
+  [ "${SOLCAM_ROBOT:-1}" = "0" ] && robot=0
+  echo "[run] DISPLAY=$DISPLAY  WS=$WS  VIDEO=$VIDEO_DEV  phone=$phone  robot=$robot"
 
   if [ "$phone" = 1 ]; then
     echo "[run] 0) v4l2loopback 깨끗이 리로드(매 실행 클린 시작)"
@@ -109,7 +118,19 @@ run() {
   #  없으면 OAK 영상/플레이스홀더로 렌더하므로 블로킹/검은멈춤 없음. 폰은 나중에
   #  붙어도 late-join 으로 자동 표시된다.
   echo "[run] 3) ui_node (LCD 전체화면=$FULLSCREEN, $LOG/ui.log) — 폰 없어도 바로 뜸"
+  #  ui_node 가 키보드 수동주행(teleop)도 겸한다 — LCD 창 포커스에서 화살표/WASD 로 주행.
+  #  별도 teleop 창 불필요. (teleop:=false 로 끌 수 있음)
   ros2 run ros2_gesture_node ui_node --ros-args -p fullscreen:=$FULLSCREEN >"$LOG/ui.log" 2>&1 &
+
+  if [ "$robot" = 1 ]; then
+    echo "[run] 3b) driver_bridge (STM 드라이버, $SERIAL_DEV, $LOG/driver.log)"
+    ( cd "$REPO" && ros2 launch ros2_driver_bridge driver.launch.py port:="$SERIAL_DEV" ) >"$LOG/driver.log" 2>&1 &
+    sleep 2
+    echo "[run] 3c) control_node (모드/주행 제어, $LOG/control.log)"
+    ros2 run ros2_control_node control_node >"$LOG/control.log" 2>&1 &
+  else
+    echo "[run] 3b) robot 비활성(norobot) — driver_bridge/control_node 생략(STM 없는 PC)"
+  fi
 
   if [ "$phone" = 1 ]; then
     echo "[run] 4) phone_bridge (managed scrcpy + 자동복구, $LOG/phone.log)"
@@ -133,8 +154,8 @@ run() {
 
 case "${1:-}" in
   clean) src; clean ;;
-  run)   run "${2:-}" ;;
+  run)   shift; run "$@" ;;
   stop)  src; stop ;;
   status) src; status ;;
-  *) echo "사용: $0 {clean|run [nophone]|stop|status}"; exit 1 ;;
+  *) echo "사용: $0 {clean|run [nophone] [norobot]|stop|status}"; exit 1 ;;
 esac

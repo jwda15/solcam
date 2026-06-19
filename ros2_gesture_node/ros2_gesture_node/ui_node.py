@@ -14,6 +14,7 @@ ROS 토픽을 받아 Hud(hud.py)로 렌더한다. 디자인/그리기는 전부 
 pygame/디스플레이 없으면 콘솔 폴백. /phone/* 는 ros2_phone_bridge(scrcpy/adb)가 발행.
 """
 import json
+import math
 import time
 
 import numpy as np
@@ -22,6 +23,12 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, Int32, String, Float32
 from sensor_msgs.msg import Image, BatteryState
+from geometry_msgs.msg import Twist
+
+# 키보드 수동주행 모드 이름(오버레이 표시용). ASCII 영문만 — pygame 기본 폰트가
+# 한글/화살표 글리프가 없어 □로 깨지기 때문.
+MODE_NAMES = {0: "IDLE (manual)", 1: "FOLLOW", 2: "ROTATE",
+              3: "FOLLOW2", 4: "ORBIT", 5: "(n/a)"}
 
 
 class UiNode(Node):
@@ -55,6 +62,23 @@ class UiNode(Node):
             Image, str(self.get_parameter("video_fallback").value), self._oak_img_cb,
             qos_profile_sensor_data)
 
+        # ----- 키보드 수동주행(teleop) : UI 창이 포커스를 가지면 바로 조작 -----
+        #  teleop_keyboard.py 의 로직을 UI 에 이식. 별도 teleop 창 없이 LCD UI 에서
+        #  화살표/WASD 로 바로 주행. control_node 모드0(IDLE)에서만 실제 주행 반영된다.
+        #    ↑/↓ 전후진(vx)  ←/→ 좌우 평행이동(vy, 메카넘)  a/d 좌/우회전(wz)
+        #    space 정지   m→숫자(0~5) 모드변경   esc 종료
+        self.declare_parameter("teleop", True)     # 키보드 주행 on/off (개발 PC면 false 가능)
+        self.declare_parameter("speed", 0.3)       # m/s, 평면 목표속도
+        self.declare_parameter("yaw_rate", 0.8)    # rad/s, 회전 목표속도
+        self.teleop_on = bool(self.get_parameter("teleop").value)
+        self.speed = float(self.get_parameter("speed").value)
+        self.yaw_rate = float(self.get_parameter("yaw_rate").value)
+        self.pub_teleop = self.create_publisher(Twist, "/teleop_cmd", 10)
+        self.pub_mode_out = self.create_publisher(Int32, "/control_mode", 10)
+        self.mode_select = False     # m 오버레이 상태
+        self.last_key_mode = None    # 마지막으로 키로 바꾼 모드(표시용)
+        self.cur_vx = self.cur_vy = self.cur_wz = 0.0
+
         try:
             import pygame
             from .hud import Hud
@@ -66,6 +90,7 @@ class UiNode(Node):
             self.screen = pygame.display.set_mode(size, flags)
             pygame.mouse.set_visible(False)
             self.hud = Hud(pygame)
+            self.kfont = pygame.font.Font(None, 26)   # 모드선택 오버레이용(ASCII)
             self._closing = False
             self.render_timer = self.create_timer(1.0 / 30.0, self._render)
             self.get_logger().info("LCD UI 시작 (pygame)")
@@ -123,14 +148,18 @@ class UiNode(Node):
         if self._closing:
             return
         for e in pg.event.get():
-            if e.type == pg.QUIT or (e.type == pg.KEYDOWN and e.key == pg.K_ESCAPE):
-                self._closing = True    # main 루프가 _closing 보고 빠져나가 정상 종료
-                try:
-                    self.render_timer.cancel()
-                except Exception:
-                    pass
-                pg.quit()               # 창 즉시 닫기(WM '응답 없음' 방지)
-                return
+            if e.type == pg.QUIT:
+                self._quit_ui(); return
+            if e.type == pg.KEYDOWN:
+                if self.mode_select:          # 모드 오버레이: 숫자=선택, m/esc=취소
+                    self._teleop_mode_key(e.key); continue
+                if e.key == pg.K_ESCAPE:
+                    self._quit_ui(); return
+                if self.teleop_on and e.key == pg.K_m:
+                    self.mode_select = True
+        # 키보드 수동주행: 매 프레임 키 상태 폴링 → /teleop_cmd 발행(대각선 동시키 지원)
+        if self.teleop_on and not self.mode_select:
+            self._teleop_poll()
         state = self.snap.get("state")
         oak_view = bool(self.snap.get("ui_flags", {}).get("oak_view", False))
         # 폰 영상이 없으면(미연결/nophone) 메뉴에서도 분할하지 않고 OAK 전체 배경.
@@ -141,7 +170,71 @@ class UiNode(Node):
                       recording=self.recording, rec_start=self.rec_start,
                       frame=(self.phone_frame if split else bg),
                       oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
+        if self.mode_select:
+            self._draw_mode_overlay()
         pg.display.flip()
+
+    def _quit_ui(self):
+        pg = self.pygame
+        self._closing = True       # main 루프가 _closing 보고 빠져나가 정상 종료
+        try:
+            self.render_timer.cancel()
+        except Exception:
+            pass
+        pg.quit()                  # 창 즉시 닫기(WM '응답 없음' 방지)
+
+    # ----- 키보드 수동주행(teleop) -----
+    def _teleop_poll(self):
+        pg = self.pygame
+        keys = pg.key.get_pressed()
+        # 화살표 또는 WASD(이동) — 화살표가 OS/포커스에 막히는 경우 대비 이중 매핑.
+        up    = keys[pg.K_UP]    or keys[pg.K_w]
+        down  = keys[pg.K_DOWN]  or keys[pg.K_s]
+        left  = keys[pg.K_LEFT]
+        right = keys[pg.K_RIGHT]
+        vx = (up - down) * self.speed                       # +전방
+        vy = (left - right) * self.speed                    # +좌측(메카넘)
+        wz = (keys[pg.K_a] - keys[pg.K_d]) * self.yaw_rate  # +CCW(좌회전)
+        if keys[pg.K_SPACE]:
+            vx = vy = wz = 0.0
+        mag = math.hypot(vx, vy)                            # 대각선은 √2배 → speed로 정규화
+        if mag > self.speed:
+            vx *= self.speed / mag
+            vy *= self.speed / mag
+        self.cur_vx, self.cur_vy, self.cur_wz = vx, vy, wz
+        msg = Twist()
+        msg.linear.x = vx
+        msg.linear.y = vy
+        msg.angular.z = wz
+        self.pub_teleop.publish(msg)
+
+    def _teleop_mode_key(self, key):
+        pg = self.pygame
+        num = {pg.K_0: 0, pg.K_1: 1, pg.K_2: 2, pg.K_3: 3, pg.K_4: 4, pg.K_5: 5}
+        if key in num:
+            self.pub_mode_out.publish(Int32(data=num[key]))
+            self.last_key_mode = num[key]
+            self.get_logger().info(f"mode -> {num[key]} {MODE_NAMES.get(num[key], '')}")
+            self.mode_select = False
+        elif key in (pg.K_m, pg.K_ESCAPE):
+            self.mode_select = False     # 취소
+
+    def _draw_mode_overlay(self):
+        pg = self.pygame
+        scr = self.screen
+        w, h = scr.get_size()
+        box = pg.Surface((360, 232))
+        box.set_alpha(235)
+        box.fill((18, 18, 22))
+        scr.blit(box, (w // 2 - 180, h // 2 - 116))
+        x = w // 2 - 160
+        y = h // 2 - 100
+        scr.blit(self.kfont.render("Mode select - press number", True, (90, 200, 140)), (x, y))
+        y += 34
+        for k, name in MODE_NAMES.items():
+            scr.blit(self.kfont.render(f"  {k}.  {name}", True, (210, 210, 210)), (x, y))
+            y += 26
+        scr.blit(self.kfont.render("M / Esc = cancel", True, (130, 130, 130)), (x, y + 6))
 
     def _render_console(self):
         s = self.snap
