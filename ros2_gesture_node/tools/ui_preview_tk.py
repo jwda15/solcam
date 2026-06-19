@@ -38,7 +38,7 @@ from ros2_gesture_node.menu import MenuStateMachine, build_menu
 
 # ----- 테마 (hud.py와 동일) -----
 BG      = "#0d0f12"
-CARD    = "#1a1e24"
+CARD    = "#1a1e26"   # 카드 어두운 회색(흰 글씨 대비)
 BASE    = "#3c465c"   # 기저 테두리
 ACCENT  = "#1e90ff"   # 테마 블루(게이지+테두리)
 FILL    = "#1e90ff"   # = ACCENT (테두리 차오름)

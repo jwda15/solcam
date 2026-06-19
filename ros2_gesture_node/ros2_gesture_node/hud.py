@@ -35,6 +35,8 @@ DIM = (174, 180, 189)
 REC_RED = (255, 90, 90)
 HINT = (123, 129, 139)
 BASE_BORDER = (60, 70, 92)   # 비활성/기저 테두리
+CARD_FILL = (26, 30, 38)     # 카드 배경(어두운 회색) — 흰 글씨 대비
+CARD_ALPHA = 180             # ≈70% 불투명 (투명도 30%)
 FLASH_SEC = 0.1              # 확정 흰 반짝 지속
 
 
@@ -96,7 +98,7 @@ class Hud:
             rect = pg.Rect(x0 + i * (cw + gap), y, cw, ch)
             self._last_rects[it["gesture"]] = rect
             active = (it["gesture"] == hold_g and prog > 0)
-            self._panel(scr, rect, (255, 255, 255), 22)
+            self._panel(scr, rect, CARD_FILL, CARD_ALPHA)
             self._border(scr, rect, BASE_BORDER, 255, 2)
             if active:
                 self._border_fill_lr(scr, rect, prog, FILL, 255, 3)
@@ -238,7 +240,7 @@ class Hud:
             if active and repeating:
                 self._panel(scr, rect, (255, 255, 255), 245); col = INK
             else:
-                self._panel(scr, rect, (255, 255, 255), 22)
+                self._panel(scr, rect, CARD_FILL, CARD_ALPHA)
                 self._border(scr, rect, BASE_BORDER, 255, 2)
                 if active:
                     self._border_fill_lr(scr, rect, prog, FILL, 255, 3)
