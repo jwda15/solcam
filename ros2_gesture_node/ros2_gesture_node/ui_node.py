@@ -88,7 +88,9 @@ class UiNode(Node):
                     int(self.get_parameter("height").value))
             flags = pygame.FULLSCREEN if self.get_parameter("fullscreen").value else 0
             self.screen = pygame.display.set_mode(size, flags)
+            pygame.display.set_caption("SolCam")
             pygame.mouse.set_visible(False)
+            self._try_focus_window()   # 키보드 주행 위해 창 포커스 best-effort 확보
             self.hud = Hud(pygame)
             self.kfont = pygame.font.Font(None, 26)   # 모드선택 오버레이용(ASCII)
             self._closing = False
@@ -172,7 +174,30 @@ class UiNode(Node):
                       oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
         if self.mode_select:
             self._draw_mode_overlay()
+        elif self.teleop_on and hasattr(pg.key, "get_focused") and not pg.key.get_focused():
+            self._draw_focus_hint()   # 창이 포커스 없으면 키보드 주행 안 먹음 → 안내
         pg.display.flip()
+
+    def _try_focus_window(self):
+        # 키보드 주행은 창이 키보드 포커스를 가져야 먹는다. WM 도구로 best-effort 활성화.
+        #  (도구가 없거나 실패하면 무시 — 그땐 화면 안내대로 창을 한 번 클릭하면 됨)
+        import shutil
+        import subprocess
+        for cmd in (["wmctrl", "-a", "SolCam"],
+                    ["xdotool", "search", "--name", "SolCam", "windowactivate"]):
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+                    return
+                except Exception:
+                    pass
+
+    def _draw_focus_hint(self):
+        # ASCII 영문(기본폰트엔 한글 글리프 없음). 포커스 없을 때만 상단에 빨간 안내.
+        s = self.kfont.render("CLICK THIS WINDOW for keyboard drive (no focus)",
+                              True, (240, 120, 120))
+        self.screen.blit(s, (16, 6))
 
     def _quit_ui(self):
         # ESC/창닫기 = UI만이 아니라 전체 솔캠 스택을 정지(노드 중첩 방지).

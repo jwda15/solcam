@@ -123,9 +123,9 @@ struct ObstacleParams
 struct NodeParams
 {
   int    start_mode        = 0;     // 시작 모드 (0=IDLE). supervisor가 바꿈
-  bool   freeze_owner      = true;  // ★모드 확정 순간 주인 위치를 고정 타겟으로 캡처해
-                                    //  그 점 기준으로 제어(휠 거리/공전이 안정적으로 동작).
-                                    //  false=실시간 주인 추종(기존).
+  bool   freeze_owner      = false; // 기본 false = 실시간 주인 추종(졸졸 따라감, 기존 FOLLOW).
+                                    //  true 면 모드확정 순간 주인 위치를 고정 타겟으로
+                                    //  잡고 안 따라감(정지 구도용). 보통 false 권장.
   double ctrl_rate         = 50.0;  // Hz, 제어 루프 주기
   double camera_latency    = 0.0;   // s, 카메라(트래킹) 파이프라인 지연 보상.
                                     //  회전 중 azimuth 가 "조금 전" 값이라
