@@ -100,6 +100,11 @@ class DriverBridge(Node):
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('verify_rx_checksum', True)  # 깨진 프레임 버림
+        # STM 상태(엔코더) 포맷:
+        #   'ascii'  — 현 보드 펌웨어: "e1,e2,e3,e4\n" 텍스트 (yaw각 미전송)
+        #   'binary' — repo driver_firmware: 0xBB 19바이트 (yaw각 포함)
+        #   보드에 구워진 펌웨어에 맞출 것. 둘 다 엔코더로 /odom 을 계산해 발행한다.
+        self.declare_parameter('status_format', 'ascii')
 
         gp = self.get_parameter
         self.port = gp('port').value
@@ -117,6 +122,7 @@ class DriverBridge(Node):
         self.odom_frame = gp('odom_frame').value
         self.base_frame = gp('base_frame').value
         self.verify_rx_checksum = bool(gp('verify_rx_checksum').value)
+        self.status_format = str(gp('status_format').value).lower()
 
         # ---------------- 상태 ----------------
         self._cmd_lock = threading.Lock()
@@ -229,6 +235,14 @@ class DriverBridge(Node):
     #  RX: 0xBB 헤더 동기화 → 19바이트 파싱 → odom / top_yaw_state 발행
     # ====================================================================
     def _rx_loop(self):
+        # 보드 상태 포맷에 따라 분기 (둘 다 엔코더 → /odom 공통 계산).
+        if self.status_format == 'ascii':
+            self._rx_loop_ascii()
+        else:
+            self._rx_loop_binary()
+
+    # ---- 바이너리(0xBB 19B) 수신 — repo driver_firmware ----
+    def _rx_loop_binary(self):
         buf = bytearray()
         while self._rx_running and rclpy.ok():
             try:
@@ -239,7 +253,6 @@ class DriverBridge(Node):
             if not chunk:
                 continue
             buf.extend(chunk)
-
             # 헤더 기준으로 프레임 잘라내기 (1바이트 단위 재동기화)
             while len(buf) >= RX_SIZE:
                 if buf[0] != HEADER_RX:
@@ -250,19 +263,52 @@ class DriverBridge(Node):
                     del buf[0]               # 체크섬 불일치 → 한 칸 밀어 재동기화
                     continue
                 del buf[0:RX_SIZE]
-                self._handle_status(frame)
+                self._handle_status_binary(frame)
 
-    def _handle_status(self, frame: bytes):
+    # ---- ASCII("e1,e2,e3,e4\n") 수신 — 현 보드 펌웨어 ----
+    def _rx_loop_ascii(self):
+        buf = bytearray()
+        while self._rx_running and rclpy.ok():
+            try:
+                chunk = self.ser.read(64)
+            except Exception as e:
+                self.get_logger().error(f"시리얼 read 실패: {e}")
+                continue
+            if not chunk:
+                continue
+            buf.extend(chunk)
+            while b'\n' in buf:
+                line, _, rest = buf.partition(b'\n')
+                buf = bytearray(rest)
+                self._handle_status_ascii(line)
+
+    def _handle_status_binary(self, frame: bytes):
         # '<B hhhh ff B B' = 1+8+4+4+1+1 = 19
         (_hdr, e1, e2, e3, e4, lift_h, yaw_a, _rsv, _chk) = \
             struct.unpack('<Bhhhhff BB', frame)
-
         # 상단 yaw 현재각 발행 (펌웨어가 직접 rad로 줌)
         self.yaw_pub.publish(Float32(data=float(yaw_a)))
+        if self.publish_odom:
+            self._odom_from_encoders(e1, e2, e3, e4)
 
-        if not self.publish_odom:
+    def _handle_status_ascii(self, line: bytes):
+        # "e1,e2,e3,e4" — 앞 4개 정수만 사용(뒤 잉여 필드/잡음 무시).
+        #  ※ ASCII 펌웨어는 상단yaw각을 안 보내므로 /top_yaw_state 는 미발행.
+        #    (OAK가 yaw 스테이지에 없을 땐 theta_head=0 이 오히려 맞음)
+        try:
+            parts = line.decode('ascii', errors='ignore').strip().split(',')
+            if len(parts) < 4:
+                return
+            e1, e2, e3, e4 = (int(parts[i]) for i in range(4))
+        except (ValueError, IndexError):
             return
+        if self.publish_odom:
+            self._odom_from_encoders(e1, e2, e3, e4)
 
+    # ---- 엔코더 델타 4개 → 메카넘 정기구학 → /odom (두 포맷 공용) ----
+    #  ※ 엔코더는 "지난 주기 카운트 델타"로 가정(펌웨어가 매 루프 카운터 리셋).
+    #    값이 누적이면 odom이 폭주하니, 그 경우 펌웨어/파서를 델타로 맞출 것.
+    def _odom_from_encoders(self, e1, e2, e3, e4):
         now = self.get_clock().now()
         if self._last_rx_time is None:
             self._last_rx_time = now

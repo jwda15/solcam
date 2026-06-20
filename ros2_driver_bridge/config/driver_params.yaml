@@ -32,4 +32,7 @@ driver_bridge:
     publish_odom: true
     odom_frame: odom
     base_frame: base_link
-    verify_rx_checksum: true # 체크섬 깨진 상태프레임 버림
+    verify_rx_checksum: true # 체크섬 깨진 상태프레임 버림 (binary 모드 전용)
+    # STM 상태(엔코더) 포맷. 현 보드 펌웨어=ascii("e1,e2,e3,e4\n").
+    #   repo driver_firmware(0xBB 19B) 구우면 binary 로 바꿀 것.
+    status_format: ascii    # ascii | binary
