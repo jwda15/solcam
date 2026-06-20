@@ -90,12 +90,9 @@ class UiNode(Node):
             self.screen = pygame.display.set_mode(size, flags)
             pygame.display.set_caption("SolCam")
             pygame.mouse.set_visible(False)
-            self._try_focus_window()   # 키보드 주행 위해 창 포커스 best-effort 확보
             self.hud = Hud(pygame)
             self.kfont = pygame.font.Font(None, 26)   # 모드선택 오버레이용(ASCII)
             self._closing = False
-            self._render_count = 0
-            self._focus_tries = 0     # 창이 뜬 뒤 몇 초간 포커스 재시도(아래 _render)
             self.render_timer = self.create_timer(1.0 / 30.0, self._render)
             self.get_logger().info("LCD UI 시작 (pygame)")
         except Exception as e:
@@ -151,13 +148,6 @@ class UiNode(Node):
         pg = self.pygame
         if self._closing:
             return
-        # 창이 뜬 직후 몇 초간 포커스 재시도(전체화면 유지). 도구(wmctrl/xdotool)가
-        #  있으면 클릭 없이 자동 포커스, 없으면 화면 안내대로 한 번 클릭하면 됨.
-        self._render_count += 1
-        if self._focus_tries < 8 and self._render_count % 10 == 0:
-            if not (hasattr(pg.key, "get_focused") and pg.key.get_focused()):
-                self._try_focus_window()
-            self._focus_tries += 1
         for e in pg.event.get():
             if e.type == pg.QUIT:
                 self._quit_ui(); return
@@ -183,30 +173,23 @@ class UiNode(Node):
                       oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
         if self.mode_select:
             self._draw_mode_overlay()
-        elif self.teleop_on and hasattr(pg.key, "get_focused") and not pg.key.get_focused():
-            self._draw_focus_hint()   # 창이 포커스 없으면 키보드 주행 안 먹음 → 안내
+        elif self.teleop_on:
+            self._draw_teleop_status()   # 포커스 상태 + 키 입력값(진단/안내)
         pg.display.flip()
 
-    def _try_focus_window(self):
-        # 키보드 주행은 창이 키보드 포커스를 가져야 먹는다. WM 도구로 best-effort 활성화.
-        #  (도구가 없거나 실패하면 무시 — 그땐 화면 안내대로 창을 한 번 클릭하면 됨)
-        import shutil
-        import subprocess
-        for cmd in (["wmctrl", "-a", "SolCam"],
-                    ["xdotool", "search", "--name", "SolCam", "windowactivate"]):
-            if shutil.which(cmd[0]):
-                try:
-                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                     stderr=subprocess.DEVNULL)
-                    return
-                except Exception:
-                    pass
-
-    def _draw_focus_hint(self):
-        # ASCII 영문(기본폰트엔 한글 글리프 없음). 포커스 없을 때만 상단에 빨간 안내.
-        s = self.kfont.render("CLICK THIS WINDOW for keyboard drive (no focus)",
-                              True, (240, 120, 120))
-        self.screen.blit(s, (16, 6))
+    def _draw_teleop_status(self):
+        # 키보드 주행 진단/안내(ASCII, 기본폰트). 포커스 있으면 실시간 vx/vy/wz,
+        #  없으면 빨간 클릭 안내. 키 눌렀는데 값이 0이면 포커스 문제, 값이 변하면
+        #  ui_node 는 정상(그땐 control_node/IDLE 쪽 확인).
+        pg = self.pygame
+        if hasattr(pg.key, "get_focused") and pg.key.get_focused():
+            txt = "key drive  vx=%+.2f  vy=%+.2f  wz=%+.2f" % (
+                self.cur_vx, self.cur_vy, self.cur_wz)
+            col = (120, 200, 240)
+        else:
+            txt = "CLICK THIS WINDOW for keyboard drive (no focus)"
+            col = (240, 120, 120)
+        self.screen.blit(self.kfont.render(txt, True, col), (16, 6))
 
     def _quit_ui(self):
         # ESC/창닫기 = UI만이 아니라 전체 솔캠 스택을 정지(노드 중첩 방지).
