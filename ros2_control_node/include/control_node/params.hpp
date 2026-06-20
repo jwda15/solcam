@@ -29,9 +29,9 @@ struct ControllerParams
   //  속도·가속 상한은 발행 직전 최종 클램프(applySafetyLimits, control_node)
   //  로 한 번 더 강제된다 → 어떤 모드/제어기 버그가 있어도 절대 못 넘는다.
   // ========================================================================
-  double v_max          = 0.2;   // m/s, 몸체 평면속도 상한 (벡터 크기 기준)
-                                 //  ★실차 모터가 매핑보다 빨라 0.4→0.2(체감 절반).
-                                 //   yaml(control_params.yaml)에서 런타임 조정.
+  double v_max          = 0.15;  // m/s, 몸체 평면속도 상한 (벡터 크기 기준)
+                                 //  ★실차 모터가 빨라 더 낮춤. control_params.yaml 에서
+                                 //   런타임 조정(이제 solcam.sh 가 yaml 을 로드함).
   double w_body_max     = 0.7;   // rad/s, 몸체 각속도 상한
                                  //  ※회전도 휠 토크를 씀. 직진+회전 동시 시
                                  //   휠 부하가 더 커지니 토크 빠듯하면 같이 낮출 것.
@@ -101,7 +101,7 @@ struct ControllerParams
   double z_min        = 0.0;   // m, 행정 하한 (내림 명령 목표)
   double z_max        = 0.5;   // m, 행정 상한 (올림 명령 목표)
   double lift_default = 0.0;   // m, (미사용 — 시간기반 제어로 전환)
-  bool   lift_invert  = false; // ★올림/내림이 실제와 반대면 true (배선/기구 보정)
+  bool   lift_invert  = true;  // ★올림/내림이 실제와 반대면 true (실차 확인=반대라 true)
 
   // --- 상단 yaw 언와인딩 (TODO: 지금은 자리만, 사실상 무한) ---
   double theta_soft_max = 1.0e9;   // rad (나중에 ~±1.8바퀴로 축소 예정)

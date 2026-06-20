@@ -136,7 +136,11 @@ run() {
     ( cd "$REPO" && ros2 launch ros2_driver_bridge driver.launch.py port:="$SERIAL_DEV" ) >"$LOG/driver.log" 2>&1 &
     sleep 2
     echo "[run] 3c) control_node (모드/주행 제어, $LOG/control.log)"
-    ros2 run ros2_control_node control_node >"$LOG/control.log" 2>&1 &
+    #  ★params-file 로 control_params.yaml 로드 — 안 주면 컴파일 기본값으로만 돈다
+    #   (튜닝 값이 안 먹던 원인). 이제 yaml 만 바꾸고 재시작하면 바로 반영된다.
+    ros2 run ros2_control_node control_node --ros-args \
+         --params-file "$REPO/ros2_control_node/config/control_params.yaml" \
+         >"$LOG/control.log" 2>&1 &
   else
     echo "[run] 3b) robot 비활성(norobot) — driver_bridge/control_node 생략(STM 없는 PC)"
   fi
