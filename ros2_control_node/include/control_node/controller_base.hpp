@@ -52,8 +52,8 @@ protected:
   //  주인이 우측(azimuth>0)이면 목표각 감소(CW). 변화율은 w_top_max 제한.
   void trackTopYaw(const ControlInput & in, ControlCommand & cmd);
 
-  // 리프트: 손동작 명령(adjust.lift_commanded)이 있으면 z_min~z_max 로
-  //  클램프해 위치 명령. 없으면 비활성(드라이버가 현 위치 유지).
+  // 리프트(시간기반): 손동작 명령이 들어오는 동안(adjust.lift_active_now)만
+  //  방향(adjust.lift_dir)에 맞는 행정 끝점으로 보내 이동, 끊기면 비활성(현위치 정지).
   void applyLift(const ControlInput & in, ControlCommand & cmd) const;
 
   // 로봇→주인 글로벌 방위각 [rad] (owner_global_valid 전제)

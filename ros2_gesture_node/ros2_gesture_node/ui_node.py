@@ -175,6 +175,8 @@ class UiNode(Node):
         pg.display.flip()
 
     def _quit_ui(self):
+        # ESC/창닫기 = UI만이 아니라 전체 솔캠 스택을 정지(노드 중첩 방지).
+        self._stop_full_stack()
         pg = self.pygame
         self._closing = True       # main 루프가 _closing 보고 빠져나가 정상 종료
         try:
@@ -182,6 +184,25 @@ class UiNode(Node):
         except Exception:
             pass
         pg.quit()                  # 창 즉시 닫기(WM '응답 없음' 방지)
+
+    def _stop_full_stack(self):
+        # 아이콘 래퍼가 export 한 SOLCAM_REPO 가 있을 때만 solcam.sh stop 을 띄워
+        #  전체 노드를 graceful 종료. (단독 실행 등 REPO 없으면 UI 만 닫힘)
+        #  detach(start_new_session) 해서 ui_node 가 죽어도 stop 은 끝까지 돈다.
+        import os
+        import subprocess
+        repo = os.environ.get("SOLCAM_REPO")
+        if not repo:
+            return
+        sh = os.path.join(repo, "scripts", "solcam.sh")
+        if not os.path.exists(sh):
+            return
+        try:
+            subprocess.Popen(["bash", "-lic", f"'{sh}' stop"],
+                             start_new_session=True)
+            self.get_logger().info("ESC → 전체 스택 정지(solcam.sh stop)")
+        except Exception as e:
+            self.get_logger().warn(f"전체 정지 실패({e}) — UI만 닫힘")
 
     # ----- 키보드 수동주행(teleop) -----
     def _teleop_poll(self):

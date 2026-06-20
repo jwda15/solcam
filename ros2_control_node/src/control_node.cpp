@@ -42,7 +42,6 @@ ControlNode::ControlNode()
   engaged_ = false;
   obstacle_field_.setThresholds(obstacle_params_.stop_dist,
                                 obstacle_params_.slow_dist);
-  adjust_.lift_height = params_.lift_default;   // 리프트 조정 시작점
 
   // ----- 발행 -----
   cmd_pub_ = this->create_publisher<ros2_control_node::msg::ControlCmd>(
@@ -80,6 +79,7 @@ ControlNode::ControlNode()
   last_odom_time_      = this->now();
   last_proximity_time_ = this->now();
   last_step_time_      = this->now();
+  last_lift_cmd_time_  = this->now();
 
   RCLCPP_INFO(this->get_logger(),
     "control_node 시작. rate=%.0fHz, mode=%d, seg_D=%.2fm, 회피=%s",
@@ -127,6 +127,7 @@ void ControlNode::declareParams()
   this->declare_parameter("z_min",        c.z_min);
   this->declare_parameter("z_max",        c.z_max);
   this->declare_parameter("lift_default", c.lift_default);
+  this->declare_parameter("lift_invert",  c.lift_invert);
 
   // 언와인딩(자리만)
   this->declare_parameter("theta_soft_max", c.theta_soft_max);
@@ -144,6 +145,7 @@ void ControlNode::declareParams()
   this->declare_parameter("mode",              n.start_mode);
   this->declare_parameter("camera_latency",    n.camera_latency);
   this->declare_parameter("ctrl_rate",         n.ctrl_rate);
+  this->declare_parameter("lift_cmd_timeout",  n.lift_cmd_timeout);
   this->declare_parameter("owner_timeout",     n.owner_timeout);
   this->declare_parameter("odom_timeout",      n.odom_timeout);
   this->declare_parameter("proximity_timeout", n.proximity_timeout);
@@ -182,6 +184,7 @@ void ControlNode::loadParams()
   params_.z_min        = this->get_parameter("z_min").as_double();
   params_.z_max        = this->get_parameter("z_max").as_double();
   params_.lift_default = this->get_parameter("lift_default").as_double();
+  params_.lift_invert  = this->get_parameter("lift_invert").as_bool();
 
   params_.theta_soft_max = this->get_parameter("theta_soft_max").as_double();
 
@@ -194,6 +197,7 @@ void ControlNode::loadParams()
   node_params_.start_mode        = static_cast<int>(this->get_parameter("mode").as_int());
   node_params_.camera_latency    = this->get_parameter("camera_latency").as_double();
   node_params_.ctrl_rate         = this->get_parameter("ctrl_rate").as_double();
+  node_params_.lift_cmd_timeout  = this->get_parameter("lift_cmd_timeout").as_double();
   node_params_.owner_timeout     = this->get_parameter("owner_timeout").as_double();
   node_params_.odom_timeout      = this->get_parameter("odom_timeout").as_double();
   node_params_.proximity_timeout = this->get_parameter("proximity_timeout").as_double();
@@ -291,10 +295,11 @@ void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
       adjust_.heading_offset = wrapAngle(
         msg->delta ? adjust_.heading_offset + msg->value : msg->value);
       break;
-    case AdjustCmd::PARAM_LIFT_HEIGHT:     // 공통: 리프트 목표 높이
-      adjust_.lift_height =
-        msg->delta ? adjust_.lift_height + msg->value : msg->value;
-      adjust_.lift_commanded = true;       // 클램프는 제어기(applyLift)에서
+    case AdjustCmd::PARAM_LIFT_HEIGHT:     // 공통: 리프트 방향(꾹 누름 시간기반)
+      //  값 부호만 본다: +면 올림, -면 내림. 손동작이 들어오는 동안만 움직이고
+      //  (last_lift_cmd_time_ 기준 lift_cmd_timeout), 끊기면 정지. applyLift 참조.
+      adjust_.lift_dir = (msg->value >= 0.0f) ? +1 : -1;
+      last_lift_cmd_time_ = this->now();
       break;
     default:
       RCLCPP_WARN(this->get_logger(), "알 수 없는 adjust param: %d", msg->param);
@@ -365,6 +370,10 @@ void ControlNode::controlStep()
   in.owner_global = estimator_.ownerGlobal();
   in.owner_global_valid = est_ok && !ownerTimedOut() && !odomTimedOut();
   in.theta_head = theta_head_;
+  // 리프트 시간기반: 최근 lift_cmd_timeout 안에 손동작 명령이 있었으면 active.
+  //  손을 떼면(명령 끊김) active=false → 제어기가 lift_active=false 로 정지시킴.
+  adjust_.lift_active_now =
+    (now - last_lift_cmd_time_).seconds() < node_params_.lift_cmd_timeout;
   in.adjust = adjust_;
   in.hold_body = gesture_active_;   // 손동작 세션 중엔 몸체만 정지
   if (!teleopTimedOut()) {          // 키보드 teleop(모드0). 끊기면 0 → 자연 정지

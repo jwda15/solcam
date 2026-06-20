@@ -1,0 +1,84 @@
+============================================================================
+ SolCam 튜닝 파라미터 모음 — 실주행 때 자주 만질 값들
+ ※ ★ = 제일 자주 만지는 값.  값은 "현재 기본값".
+============================================================================
+
+[어디서 바꾸나]
+ A. 제어(주행/리프트):  ros2_control_node/config/control_params.yaml
+      → 런타임 로드. 값만 바꾸고 control_node 재시작이면 됨(재빌드 불필요,
+        단 yaml은 패키지 share에 설치되므로 symlink-install이면 git pull로 반영,
+        아니면 colcon build 한 번).
+ B. 손동작 조절폭:      ros2_gesture_node/config/gesture_params.yaml
+ C. 드라이버/odom:      ros2_driver_bridge/config/driver_params.yaml
+ D. 펌웨어(하드웨어 단): driver_firmware/Core/Src/main.c  → ★재플래시 필요
+
+============================================================================
+ A. 제어 (control_params.yaml)
+============================================================================
+[속도/가속 상한]
+ ★v_max          0.2   m/s   몸체 평면속도 상한. 느리게=↓ / 빠르게=↑(전류·발열 확인)
+  w_body_max     0.7   rad/s 몸체 회전속도 상한
+  body_accel_max 0.5   m/s^2 평면 가속 상한(슬루). 부드럽게=↓ / 민첩=↑
+  yaw_accel_max  1.5   rad/s^2 회전 가속 상한
+
+[둔감도(데드존) — "조금 움직여도 따라옴" 방지]
+ ★pos_dead       0.15  m     FOLLOW 위치 불감대. 둔감=↑ / 민감=↓
+  byaw_dead      0.05  rad   몸체 헤딩 불감대
+  az_dead        0.03  rad   상단yaw(카메라) azimuth 불감대(화면 떨림 줄이기=↑)
+
+[추종 게인(PD) — 굼뜨면 kp↑, 출렁이면 kd↑]
+  kp_pos 0.7 / kd_pos 0.15   FOLLOW 위치 추종
+  kp_byaw 1.0 / kd_byaw 0.1  몸체 헤딩 추종
+  kp_yaw 0.7                 상단yaw 주인 락온
+  w_top_max 1.5  rad/s       상단yaw 목표각 변화율 상한
+
+[모드별 거리/구도]
+  seg_distance 1.5  m        FOLLOW 유지 거리 D 기본
+  seg_d_min 0.5 / seg_d_max 3.0   손동작 거리조정 범위
+  leash_distance 1.5 / leash_dead 0.5 / kp_leash 0.6   FOLLOW2(모드3)
+  orbit_speed 0.15 / kp_orbit_r 0.5                    ORBIT(모드4)
+
+[리프트 — 시간기반(꾹 누르는 동안 이동)]
+  z_min 0.0 / z_max 0.5  m   행정 하한/상한(올림 목표=z_max, 내림=z_min)
+ ★lift_invert   false       올림/내림이 실제와 반대면 true (재빌드 없이 보정)
+  lift_cmd_timeout 0.3  s    손 떼고 정지까지 지연. 더 칼같이=↓ / 여유=↑
+
+[장애물 회피]
+  obstacle_stop_dist 0.20 / obstacle_slow_dist 0.60  m
+
+============================================================================
+ B. 손동작 조절폭 (gesture_params.yaml)
+============================================================================
+  dist_step        0.3   m    거리 1스텝(Farther/Closer)
+  bearing_step_deg 8.0   deg  공전(방위각) 1스텝
+  heading_step_deg 15.0  deg  자전/Pan 1스텝
+  lift_step        0.1   m    (시간기반 전환 후엔 부호만 사용 — 방향)
+  trigger_hold/select_hold 1.5 s   따봉/선택 유지시간
+
+============================================================================
+ C. 드라이버 브리지 / odom (driver_params.yaml)
+============================================================================
+ ★encoder_cpr   1320(placeholder)  휠 1회전 카운트. ★실측해서 교체(odom 스케일)
+ ★encoder_order [0,1,2,3]           enc↔휠 매핑 (전진=+x 되게)
+ ★encoder_signs [1,1,1,1]           부호. odom 방향 틀리면 여기서 뒤집기
+  status_format ascii               보드 펌웨어 포맷(ascii=현 보드 / binary=repo펌웨어)
+  wheel_radius 0.05 / wheel_lx 0.36 / wheel_ly 0.26  m  (펌웨어와 일치)
+
+============================================================================
+ D. 펌웨어 (driver_firmware/Core/Src/main.c) — ★재플래시 필요
+============================================================================
+  V_MAX 0.4 / PWM_MAX 999     휠 속도 매핑·하드웨어 절대상한(per-wheel 캡 가능)
+  LIFT_STEPS_PER_MM 38.55     리프트 mm당 스텝(실제 이동량 다르면 보정)
+  YAW_STEPS_PER_RAD 636.6     상단yaw rad당 스텝
+  TIM3.Period(리프트) / TIM7.Period(yaw)   스텝 주파수=속도(작을수록 빠름)
+  CMD_TIMEOUT_MS 300          명령 끊김 워치독(휠 정지)
+
+============================================================================
+ 자주 쓰는 시나리오
+============================================================================
+ - "너무 빨라"            → A: v_max ↓ (또는 D: PWM_MAX 캡, 재플래시)
+ - "조금만 움직여도 따라와" → A: pos_dead ↑
+ - "리프트 올림/내림 반대"  → A: lift_invert = true
+ - "odom 방향 이상"        → C: encoder_signs 부호 / encoder_order
+ - "공전 너무 느림/빠름"    → B: bearing_step_deg, A: v_max
+============================================================================

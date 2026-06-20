@@ -83,6 +83,12 @@ status() {
 
 run() {
   mkdir -p "$LOG"; src
+  # ★재실행 시 노드 중첩 방지: 이미 떠 있는 solcam 노드가 있으면 먼저 정리.
+  #  (ESC/창닫기로 UI만 죽고 나머지가 살아있던 경우에도 깨끗이 새로 시작)
+  if pgrep -f "ui_node|control_node|driver_bridge|oak_detector|gesture_node" >/dev/null 2>&1; then
+    echo "[run] 기존 solcam 노드 감지 → 먼저 정리(stop)"
+    stop
+  fi
   # 플래그(순서 무관, 조합 가능):
   #   nophone : 폰(scrcpy/v4l2/연동) 전부 생략 — 폰 거치만 하고 영상연동 안 할 때
   #   norobot : STM 드라이버(driver_bridge/control_node) 생략 — 개발 PC 등 STM 없을 때

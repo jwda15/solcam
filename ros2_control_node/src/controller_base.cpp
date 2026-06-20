@@ -71,13 +71,18 @@ void ControllerBase::trackTopYaw(const ControlInput & in, ControlCommand & cmd)
 
 void ControllerBase::applyLift(const ControlInput & in, ControlCommand & cmd) const
 {
-  if (in.adjust.lift_commanded) {
-    cmd.lift_height_target =
-      std::clamp(in.adjust.lift_height, params_.z_min, params_.z_max);
+  // ★시간(꾹 누름) 기반 리프트. 스텝모터에 위치피드백이 없어 "절대 목표 누적"이
+  //  드리프트로 안 멈추던 문제 → 손동작 명령이 들어오는 "동안만" 방향에 맞는
+  //  행정 끝점(z_max=올림 / z_min=내림)을 목표로 보내 그쪽으로 이동시키고,
+  //  손을 떼면(lift_active_now=false) active=false 로 드라이버가 현 위치에 정지.
+  //  업/내림이 실제와 반대면 params 의 lift_invert=true 로 뒤집는다.
+  int dir = in.adjust.lift_dir;
+  if (params_.lift_invert) { dir = -dir; }
+  if (in.adjust.lift_active_now && dir != 0) {
+    cmd.lift_height_target = (dir > 0) ? params_.z_max : params_.z_min;
     cmd.lift_active = true;
   } else {
-    // 손동작 명령이 아직 없으면 드라이버가 현 위치 유지
-    cmd.lift_height_target = params_.lift_default;
+    cmd.lift_height_target = params_.z_min;   // 미사용값(active=false=현위치 유지)
     cmd.lift_active = false;
   }
 }

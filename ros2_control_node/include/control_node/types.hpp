@@ -118,8 +118,13 @@ struct ControlCommand
 struct UserAdjust
 {
   double heading_offset = 0.0;   // rad, 몸체 헤딩 오프셋 (CCW+)
-  double lift_height    = 0.0;   // m, 리프트 목표 높이
-  bool   lift_commanded = false; // true가 되기 전엔 리프트 현 위치 유지
+
+  // ----- 리프트: 시간(꾹 누름) 기반 제어 -----
+  //  스텝모터 위치피드백이 없어 "절대 목표"가 누적·드리프트로 안 멈추는 문제 →
+  //  손동작 명령이 들어오는 "동안만" 방향에 맞게 행정 끝점으로 보내 이동시키고,
+  //  명령이 끊기면(손 뗌) 정지. control_node 가 lift_active_now 를 채운다.
+  int  lift_dir        = 0;      // +1=올림 / -1=내림 / 0=명령 없음
+  bool lift_active_now = false;  // 손동작 리프트 명령이 최근(타임아웃 내) 들어왔는가
 };
 
 // ----------------------------------------------------------------------------
