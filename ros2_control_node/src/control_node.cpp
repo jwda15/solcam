@@ -80,6 +80,7 @@ ControlNode::ControlNode()
   last_proximity_time_ = this->now();
   last_step_time_      = this->now();
   last_lift_cmd_time_  = this->now();
+  last_wheel_cmd_time_ = this->now();
 
   RCLCPP_INFO(this->get_logger(),
     "control_node 시작. rate=%.0fHz, mode=%d, seg_D=%.2fm, 회피=%s",
@@ -147,6 +148,7 @@ void ControlNode::declareParams()
   this->declare_parameter("camera_latency",    n.camera_latency);
   this->declare_parameter("ctrl_rate",         n.ctrl_rate);
   this->declare_parameter("lift_cmd_timeout",  n.lift_cmd_timeout);
+  this->declare_parameter("wheel_cmd_timeout", n.wheel_cmd_timeout);
   this->declare_parameter("owner_timeout",     n.owner_timeout);
   this->declare_parameter("odom_timeout",      n.odom_timeout);
   this->declare_parameter("proximity_timeout", n.proximity_timeout);
@@ -200,6 +202,7 @@ void ControlNode::loadParams()
   node_params_.camera_latency    = this->get_parameter("camera_latency").as_double();
   node_params_.ctrl_rate         = this->get_parameter("ctrl_rate").as_double();
   node_params_.lift_cmd_timeout  = this->get_parameter("lift_cmd_timeout").as_double();
+  node_params_.wheel_cmd_timeout = this->get_parameter("wheel_cmd_timeout").as_double();
   node_params_.owner_timeout     = this->get_parameter("owner_timeout").as_double();
   node_params_.odom_timeout      = this->get_parameter("odom_timeout").as_double();
   node_params_.proximity_timeout = this->get_parameter("proximity_timeout").as_double();
@@ -285,6 +288,14 @@ void ControlNode::gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg
 //  새 손동작 기능 추가 시: msg 에 상수 추가 + 여기 case 한 줄 (확장 지점).
 void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
 {
+  // 휠 명령(거리/공전/팬)이 들어오는 동안만 메뉴 중 몸체 hold 를 풀어 수행한다.
+  //  (명령이 끊기면 wheel_cmd_timeout 뒤 다시 정지 → "줄 때만 움직임")
+  if (msg->param == AdjustCmd::PARAM_SEG_DISTANCE ||
+      msg->param == AdjustCmd::PARAM_SEG_ANGLE ||
+      msg->param == AdjustCmd::PARAM_HEADING_OFFSET) {
+    last_wheel_cmd_time_ = this->now();
+  }
+
   switch (msg->param) {
     case AdjustCmd::PARAM_SEG_DISTANCE:    // 모드1 선분 거리 D + 모드3 leash 거리
       follow_controller_.setSegDistance(msg->value, msg->delta);
@@ -378,7 +389,11 @@ void ControlNode::controlStep()
   adjust_.lift_active_now =
     (now - last_lift_cmd_time_).seconds() < node_params_.lift_cmd_timeout;
   in.adjust = adjust_;
-  in.hold_body = gesture_active_;   // 손동작 세션 중엔 몸체만 정지
+  // 손동작 세션(메뉴 열림)엔 몸체 정지. 단 휠 명령(거리/공전/팬)이 들어오는 동안
+  //  (wheel_cmd_timeout 내)엔 hold 를 풀어 그 명령을 수행 → 명령 줄 때만 모터가 돈다.
+  bool wheel_fresh =
+    (now - last_wheel_cmd_time_).seconds() < node_params_.wheel_cmd_timeout;
+  in.hold_body = gesture_active_ && !wheel_fresh;
   if (!teleopTimedOut()) {          // 키보드 teleop(모드0). 끊기면 0 → 자연 정지
     in.teleop_vx = teleop_vx_;
     in.teleop_vy = teleop_vy_;

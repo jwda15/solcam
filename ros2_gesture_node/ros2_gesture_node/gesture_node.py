@@ -181,10 +181,10 @@ class GestureNode(Node):
         self._publish_ui()
 
     def _update_gesture_active(self):
-        # 메뉴 열림 동안엔 몸체 정지(hold) 요청. 단 Wheel 서브메뉴(거리/공전/팬)는
-        #  조작 효과를 바로 봐야 하므로 hold 를 풀어(=active False) 몸체가 움직이게 한다.
-        in_wheel = any(getattr(n, "label", "") == "Wheel" for n in self.sm.path)
-        active = (self.sm.state == "MENU") and not in_wheel
+        # 메뉴 열림 동안엔 몸체 정지(hold) 요청. Wheel 명령(거리/공전/팬)으로 몸체를
+        #  움직이는 건 control_node 가 "명령이 들어오는 동안만" hold 를 풀어 처리한다
+        #  → 명령을 줄 때만 모터가 돌고, 안 주면 메뉴 안이어도 정지.
+        active = (self.sm.state == "MENU")
         if active != self._gesture_active_state:
             self._gesture_active_state = active
             self.pub_active.publish(Bool(data=active))

@@ -136,6 +136,8 @@ struct NodeParams
                                     //  부호가 반대로 가면 즉시 0으로 되돌릴 것.
   double lift_cmd_timeout  = 0.3;   // s, 리프트 손동작 명령이 이 시간 안 들어오면
                                     //  "손 뗌"으로 보고 리프트 정지(시간기반 제어).
+  double wheel_cmd_timeout = 0.4;   // s, 메뉴 열림 중 휠 명령(거리/공전/팬)이 이 시간
+                                    //  안 들어오면 몸체 정지(hold). 줄 때만 움직임.
   double owner_timeout     = 0.5;   // s, /owner_pose 끊김 판정
   double odom_timeout      = 0.5;   // s, /odom 끊김 판정
   double proximity_timeout = 0.3;   // s, /proximity 끊김 판정(회피 비활성)

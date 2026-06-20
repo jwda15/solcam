@@ -80,6 +80,7 @@ control_node:
                             # 회전 중 주인 추정이 끌리면 0.05~0.15 시도, 반대로 가면 0
     ctrl_rate: 50.0         # Hz
     lift_cmd_timeout: 0.3   # s, 리프트 손동작 끊기면 이 시간 뒤 정지(시간기반)
+    wheel_cmd_timeout: 0.4  # s, 메뉴 중 휠 명령(거리/공전/팬) 끊기면 이 시간 뒤 몸체 정지
     owner_timeout: 0.5      # s
     odom_timeout: 0.5       # s
     proximity_timeout: 0.3  # s

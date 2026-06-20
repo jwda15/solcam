@@ -103,6 +103,7 @@ private:
   rclcpp::Time last_proximity_time_;
   rclcpp::Time last_step_time_;
   rclcpp::Time last_lift_cmd_time_;   // 리프트 손동작 명령 마지막 수신(시간기반 제어)
+  rclcpp::Time last_wheel_cmd_time_;  // 휠 명령(거리/공전/팬) 마지막 수신(메뉴 중 hold 해제용)
 
   // ----- 부품 (전략 패턴: controllerFor()가 모드에 맞는 제어기 선택) -----
   IdleController   idle_controller_;     // 모드0: 정지 + 키보드 teleop
