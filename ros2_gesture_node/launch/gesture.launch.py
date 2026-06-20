@@ -16,7 +16,9 @@ def generate_launch_description():
                           'config', 'gesture_params.yaml')
     return LaunchDescription([
         DeclareLaunchArgument('ui', default_value='true'),
-        DeclareLaunchArgument('recognizer', default_value='hagrid'),
+        # 기본=mediapipe(손 21랜드마크, 별도 .pt/ultralytics 불필요).
+        #  hagrid YOLO 쓰려면: recognizer:=hagrid (+ ultralytics 설치 + models/*.pt)
+        DeclareLaunchArgument('recognizer', default_value='mediapipe'),
         DeclareLaunchArgument('image_topic', default_value='/oak/rgb/image_raw'),
         DeclareLaunchArgument('model_path', default_value='models/YOLOv10n_gestures.pt'),
         Node(package='ros2_gesture_node', executable='gesture_node',

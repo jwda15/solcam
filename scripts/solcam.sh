@@ -109,7 +109,10 @@ run() {
   ( cd "$REPO" && ros2 launch ros2_yolo_oak oak_tracking.launch.py viz:=false ) >"$LOG/oak.log" 2>&1 &
   sleep 6
   echo "[run] 2) gesture_node (입력=OAK /oak/rgb/image_raw, $LOG/gesture.log)"
+  #  ★recognizer=mediapipe 명시(런치 기본이 hagrid면 ultralytics 없어 죽음).
+  #   이 인자가 런치 기본값을 덮으므로 패키지 재빌드 없이도 손동작 노드가 뜬다.
   ros2 launch ros2_gesture_node gesture.launch.py ui:=false \
+       recognizer:=mediapipe \
        image_topic:=/oak/rgb/image_raw \
        model_path:="$REPO/ros2_gesture_node/models/YOLOv10n_gestures.pt" \
        >"$LOG/gesture.log" 2>&1 &
