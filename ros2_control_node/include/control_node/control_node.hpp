@@ -93,6 +93,8 @@ private:
   double      prev_theta_head_ = 0.0;    // 상단 yaw 속도 추정용 직전값
   bool        have_prev_theta_ = false;
   UserAdjust  adjust_;               // 손동작 조정값 (모드 전환에도 유지)
+  Vec2        owner_target_;             // 모드 확정(engage) 시 캡처한 주인 글로벌 타겟
+  bool        owner_target_valid_ = false;  // 캡처 완료 여부(고정 타겟 사용)
   bool        gesture_active_ = false;   // 손동작 세션 중(몸체 일시정지)
   double      teleop_vx_ = 0.0, teleop_vy_ = 0.0, teleop_wz_ = 0.0;  // 키보드 teleop
   rclcpp::Time last_owner_time_;

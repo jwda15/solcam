@@ -106,6 +106,7 @@ class GestureNode(Node):
 
         # ----- 발행자 -----
         self.pub_active = self.create_publisher(Bool, "/gesture_active", 10)
+        self._gesture_active_state = False   # 마지막으로 발행한 hold 상태(변화 시만 발행)
         self.pub_mode = self.create_publisher(Int32, "/control_mode", 10)
         self.pub_adjust = self.create_publisher(AdjustCmd, "/adjust_cmd", 10)
         self.pub_phone = self.create_publisher(String, "/phone_cmd", 10)
@@ -176,7 +177,17 @@ class GestureNode(Node):
             return
         for ev in self.sm.update(label, t):
             self._handle(ev)
+        self._update_gesture_active()
         self._publish_ui()
+
+    def _update_gesture_active(self):
+        # 메뉴 열림 동안엔 몸체 정지(hold) 요청. 단 Wheel 서브메뉴(거리/공전/팬)는
+        #  조작 효과를 바로 봐야 하므로 hold 를 풀어(=active False) 몸체가 움직이게 한다.
+        in_wheel = any(getattr(n, "label", "") == "Wheel" for n in self.sm.path)
+        active = (self.sm.state == "MENU") and not in_wheel
+        if active != self._gesture_active_state:
+            self._gesture_active_state = active
+            self.pub_active.publish(Bool(data=active))
 
     def _publish_ui(self):
         snap = self.sm.snapshot()
@@ -184,11 +195,11 @@ class GestureNode(Node):
         self.pub_ui.publish(String(data=json.dumps(snap, ensure_ascii=False)))
 
     def _handle(self, ev):
+        # gesture_active(몸체 hold) 발행은 _update_gesture_active 가 중앙에서 처리
+        #  (Wheel 메뉴에선 hold 해제). 여기선 로그/액션만.
         if ev.kind == "open":
-            self.pub_active.publish(Bool(data=True))
-            self.get_logger().info("메뉴 열림 → 몸체 일시정지 요청")
+            self.get_logger().info("메뉴 열림")
         elif ev.kind == "close":
-            self.pub_active.publish(Bool(data=False))
             self.get_logger().info(f"메뉴 닫힘({ev.reason}) → 주행 재개")
         elif ev.kind == "action":
             self._execute(ev.action)

@@ -143,6 +143,7 @@ void ControlNode::declareParams()
 
   // 모드/주기/안전 (+카메라 지연 보상, 기본 0=꺼짐)
   this->declare_parameter("mode",              n.start_mode);
+  this->declare_parameter("freeze_owner",      n.freeze_owner);
   this->declare_parameter("camera_latency",    n.camera_latency);
   this->declare_parameter("ctrl_rate",         n.ctrl_rate);
   this->declare_parameter("lift_cmd_timeout",  n.lift_cmd_timeout);
@@ -195,6 +196,7 @@ void ControlNode::loadParams()
 
   // --- NodeParams (+시작 모드) ---
   node_params_.start_mode        = static_cast<int>(this->get_parameter("mode").as_int());
+  node_params_.freeze_owner      = this->get_parameter("freeze_owner").as_bool();
   node_params_.camera_latency    = this->get_parameter("camera_latency").as_double();
   node_params_.ctrl_rate         = this->get_parameter("ctrl_rate").as_double();
   node_params_.lift_cmd_timeout  = this->get_parameter("lift_cmd_timeout").as_double();
@@ -260,6 +262,7 @@ void ControlNode::modeCallback(const std_msgs::msg::Int32::SharedPtr msg)
     mode_ = new_mode;
     estimator_.reset();
     engaged_ = false;   // 다음 스텝에서 새 제어기 engage
+    owner_target_valid_ = false;   // 새 모드 확정 시 주인 타겟 재캡처
     publishStop();
     RCLCPP_INFO(this->get_logger(), "모드 변경: %d", msg->data);
   }
@@ -390,6 +393,11 @@ void ControlNode::controlStep()
       ctrl->reset();
       ctrl->engage(in);
       engaged_ = true;
+      // ★주인 타겟 스냅샷: 모드 확정 순간의 주인 글로벌 위치를 고정 타겟으로 캡처.
+      if (in.owner_global_valid) {
+        owner_target_ = in.owner_global;
+        owner_target_valid_ = true;
+      }
     } else {
       // 아직 추정이 안 섰으면 이번 스텝은 정지하고 다음 기회에 engage
       publishStop();
@@ -397,6 +405,14 @@ void ControlNode::controlStep()
         "모드 %d 진입 대기: owner/odom 미확보", static_cast<int>(mode_));
       return;
     }
+  }
+
+  // ★주인 타겟 고정: engage 이후엔 캡처한 스냅샷을 주인 위치로 사용(실시간 대신).
+  //  → 휠(거리/공전/팬)이 고정점 기준으로 안정적으로 동작. odom 살아있는 동안 유지.
+  //   freeze_owner=false 면 기존처럼 실시간 주인 추종.
+  if (node_params_.freeze_owner && owner_target_valid_) {
+    in.owner_global = owner_target_;
+    in.owner_global_valid = in.robot.valid && !odomTimedOut();
   }
 
   // 5) 제어 스텝

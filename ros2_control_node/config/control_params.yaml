@@ -73,6 +73,9 @@ control_node:
 
     # ----- 모드/주기/안전 -----
     mode: 0                 # 시작 모드 (0=IDLE 1=FOLLOW 2=ROTATE). supervisor가 바꿈
+    freeze_owner: true      # ★모드 확정 순간 주인 위치를 고정 타겟으로 캡처(휠 거리/공전이
+                            #  그 점 기준 안정 동작). false=실시간 주인 추종(기존)
+
     camera_latency: 0.0     # s, 카메라 지연 보상. ★기본 0=꺼짐.
                             # 회전 중 주인 추정이 끌리면 0.05~0.15 시도, 반대로 가면 0
     ctrl_rate: 50.0         # Hz
