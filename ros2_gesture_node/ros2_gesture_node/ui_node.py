@@ -94,6 +94,8 @@ class UiNode(Node):
             self.hud = Hud(pygame)
             self.kfont = pygame.font.Font(None, 26)   # 모드선택 오버레이용(ASCII)
             self._closing = False
+            self._render_count = 0
+            self._focus_tries = 0     # 창이 뜬 뒤 몇 초간 포커스 재시도(아래 _render)
             self.render_timer = self.create_timer(1.0 / 30.0, self._render)
             self.get_logger().info("LCD UI 시작 (pygame)")
         except Exception as e:
@@ -149,6 +151,13 @@ class UiNode(Node):
         pg = self.pygame
         if self._closing:
             return
+        # 창이 뜬 직후 몇 초간 포커스 재시도(전체화면 유지). 도구(wmctrl/xdotool)가
+        #  있으면 클릭 없이 자동 포커스, 없으면 화면 안내대로 한 번 클릭하면 됨.
+        self._render_count += 1
+        if self._focus_tries < 8 and self._render_count % 10 == 0:
+            if not (hasattr(pg.key, "get_focused") and pg.key.get_focused()):
+                self._try_focus_window()
+            self._focus_tries += 1
         for e in pg.event.get():
             if e.type == pg.QUIT:
                 self._quit_ui(); return
