@@ -51,6 +51,23 @@ void ControllerBase::engageCommon(const ControlInput & in)
 
 void ControllerBase::trackTopYaw(const ControlInput & in, ControlCommand & cmd)
 {
+  // ===== velocity(방향) 모드 — 현 펌웨어 =====
+  //  top_yaw_target 의 부호 = 회전 방향, |값|이 펌웨어 deadband(0.05) 초과면 고정속도
+  //  회전, 그 안이면 정지. 절대각을 적분하지 않는다(피드백 없음).
+  if (params_.yaw_velocity_mode) {
+    cmd.top_yaw_active = in.owner.is_detected;
+    if (in.owner.is_detected && std::abs(in.owner.azimuth) > params_.az_dead) {
+      // 주인 방위(azimuth)를 0으로 만드는 방향으로 회전. 부호가 실제 회전과
+      //  반대면 top_yaw_sign=-1 로 뒤집는다. (|1.0| > 펌웨어 deadband)
+      double dir = (in.owner.azimuth >= 0.0) ? -1.0 : 1.0;
+      cmd.top_yaw_target = params_.top_yaw_sign * dir;
+    } else {
+      cmd.top_yaw_target = 0.0;   // 불감대 내(또는 미탐지) → 정지
+    }
+    return;
+  }
+
+  // ===== position(절대각) 모드 — 구 펌웨어 =====
   cmd.top_yaw_active = true;
   if (in.owner.is_detected && std::abs(in.owner.azimuth) > params_.az_dead) {
     double delta = -params_.kp_yaw * in.owner.azimuth;   // 목표각 증분 희망

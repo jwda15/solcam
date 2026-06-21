@@ -103,6 +103,8 @@ void ControlNode::declareParams()
   this->declare_parameter("az_dead",      c.az_dead);
   this->declare_parameter("w_top_max",    c.w_top_max);
   this->declare_parameter("top_lead_max", c.top_lead_max);
+  this->declare_parameter("yaw_velocity_mode", c.yaw_velocity_mode);
+  this->declare_parameter("top_yaw_sign",      c.top_yaw_sign);
 
   // 몸체 위치 (선분 끝점 추종, PD)
   this->declare_parameter("kp_pos",   c.kp_pos);
@@ -165,6 +167,8 @@ void ControlNode::loadParams()
   params_.az_dead      = this->get_parameter("az_dead").as_double();
   params_.w_top_max    = this->get_parameter("w_top_max").as_double();
   params_.top_lead_max = this->get_parameter("top_lead_max").as_double();
+  params_.yaw_velocity_mode = this->get_parameter("yaw_velocity_mode").as_bool();
+  params_.top_yaw_sign      = this->get_parameter("top_yaw_sign").as_double();
 
   params_.kp_pos   = this->get_parameter("kp_pos").as_double();
   params_.kd_pos   = this->get_parameter("kd_pos").as_double();

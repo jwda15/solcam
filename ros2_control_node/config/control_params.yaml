@@ -25,8 +25,10 @@ control_node:
                             # (드라이버 지연/정지 시 목표 폭주 방지. 0 이하=비활성)
 
     # ----- 상단 yaw 게인 (카메라 락온; 스텝=위치 명령) -----
-    kp_yaw: 0.7             # azimuth → 목표각 보정 게인
-    az_dead: 0.03           # rad, azimuth 불감대
+    kp_yaw: 0.7             # azimuth → 목표각 보정 게인 (position모드 전용)
+    az_dead: 0.03           # rad, azimuth 불감대 (이 안이면 상단yaw 정지)
+    yaw_velocity_mode: true # ★현 펌웨어=velocity(방향)모드. top_yaw_target 부호=회전방향
+    top_yaw_sign: 1.0       # 회전 방향이 실제와 반대면 -1.0 (실차 확인 후 보정)
 
     # ----- 몸체 위치 게인 (선분 끝점 추종, PD) -----
     kp_pos: 0.7             # 위치오차[m] → 속도[m/s] (P)
