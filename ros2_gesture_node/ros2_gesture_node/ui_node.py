@@ -9,12 +9,19 @@ ROS 토픽을 받아 Hud(hud.py)로 렌더한다. 디자인/그리기는 전부 
   /control_mode (Int32)      현재 모드
   /phone/image (Image)       촬영 영상 (없으면 /oak/rgb/image_raw 폴백)
   /phone/battery (BatteryState)  배터리 %
-  /phone/recording (Bool)    녹화 중 여부
+  /phone/recording (Bool)    녹화 중 여부 (phone_bridge 측 상태; 보조)
+  /phone_cmd (String)        "record_toggle" 면 녹화 on/off (phone 유무와 무관)
+
+녹화(REC): REC ON 동안 "지금 화면에 나오는 메인 영상"(폰 영상, 없으면 OAK-D)을
+  output_dir(기본 <SOLCAM_REPO 또는 ~/solcam>/Output)에 mp4 로 저장한다. 폰 미연결
+  이어도 OAK-D 영상으로 녹화되도록 ui_node 가 직접 기록한다(cv2.VideoWriter).
+  phone_bridge 가 따로 폰 v4l2 를 녹화/전송하는 건 별개 — 여긴 로컬 백업본.
 
 pygame/디스플레이 없으면 콘솔 폴백. /phone/* 는 ros2_phone_bridge(scrcpy/adb)가 발행.
 """
 import json
 import math
+import os
 import time
 
 import numpy as np
@@ -39,6 +46,9 @@ class UiNode(Node):
         self.declare_parameter("height", 600)
         self.declare_parameter("video_topic", "/phone/image")
         self.declare_parameter("video_fallback", "/oak/rgb/image_raw")
+        # 녹화 저장 폴더. 빈값이면 (SOLCAM_REPO 또는 ~/solcam)/Output 로 자동 해석.
+        self.declare_parameter("output_dir", "")
+        self.declare_parameter("rec_fps", 20.0)   # 저장 영상 fps (렌더 30Hz 중 이 간격으로 기록)
 
         self.snap = {"state": "IDLE", "items": [], "hold_gesture": "",
                      "hold_progress": 0.0}
@@ -50,10 +60,20 @@ class UiNode(Node):
         self.oak_frame = None      # /oak/rgb/image_raw (손동작 인식 카메라)
         self.phone_zoom = 1.0      # /phone/zoom (현재/목표 줌 배율)
 
+        # ----- 녹화(REC) → 파일 저장 상태 -----
+        self.output_dir = self._resolve_output_dir(
+            str(self.get_parameter("output_dir").value))
+        self.rec_fps = max(1.0, float(self.get_parameter("rec_fps").value))
+        self._writer = None        # cv2.VideoWriter (lazy: 첫 프레임에서 해상도 확정 후 open)
+        self._writer_size = None   # (w, h) — 녹화 중 해상도 고정(소스 바뀌면 resize)
+        self._rec_path = None
+        self._rec_last_write = 0.0 # 마지막 프레임 기록 시각(fps 게이트)
+
         self.create_subscription(String, "/gesture_ui", self._ui_cb, 10)
         self.create_subscription(Int32, "/control_mode", self._mode_cb, 10)
         self.create_subscription(BatteryState, "/phone/battery", self._batt_cb, 10)
         self.create_subscription(Bool, "/phone/recording", self._rec_cb, 10)
+        self.create_subscription(String, "/phone_cmd", self._phone_cmd_cb, 10)
         self.create_subscription(Float32, "/phone/zoom", self._zoom_cb, 10)
         self.create_subscription(
             Image, str(self.get_parameter("video_topic").value), self._phone_img_cb,
@@ -115,12 +135,98 @@ class UiNode(Node):
             self.battery = int(round(msg.percentage * 100.0))
 
     def _rec_cb(self, msg):
-        if msg.data and not self.recording:
-            self.rec_start = time.time()
-        self.recording = bool(msg.data)
+        # phone_bridge 가 알려주는 녹화 상태(보조). _set_recording 은 멱등이라
+        #  /phone_cmd 토글과 겹쳐도 안전(같은 상태면 no-op).
+        self._set_recording(bool(msg.data))
+
+    def _phone_cmd_cb(self, msg):
+        # 제스처 "Rec" → /phone_cmd "record_toggle". 폰 유무와 무관하게 여기서
+        #  직접 녹화를 토글한다(폰 없으면 OAK-D 가 저장 소스).
+        if str(msg.data).strip() == "record_toggle":
+            self._set_recording(not self.recording)
 
     def _zoom_cb(self, msg):
         self.phone_zoom = float(msg.data)
+
+    # ----- 녹화(REC) → 파일 -----
+    def _resolve_output_dir(self, param_val):
+        if param_val:
+            return os.path.expanduser(param_val)
+        repo = os.environ.get("SOLCAM_REPO")
+        base = repo if repo else os.path.expanduser("~/solcam")
+        return os.path.join(base, "Output")
+
+    def _set_recording(self, on):
+        # 멱등: 현재와 같은 상태면 아무것도 안 함.
+        if on == self.recording:
+            return
+        self.recording = on
+        if on:
+            self.rec_start = time.time()
+            self._rec_last_write = 0.0
+            self._writer = None        # 첫 프레임에서 lazy open(해상도 확정)
+            self._writer_size = None
+            self._rec_path = None
+            self.get_logger().info("REC ON → 첫 프레임에서 파일 생성")
+        else:
+            self._close_writer()
+
+    def _open_writer(self, w, h):
+        try:
+            import cv2
+        except Exception as e:
+            self.get_logger().warn(f"cv2 없음({e}) — 파일 녹화 비활성(HUD 표시만)")
+            self._writer = False       # False=시도 실패 표시(매 프레임 재시도 방지)
+            return
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            self._rec_path = os.path.join(self.output_dir, f"solcam_{ts}.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            wr = cv2.VideoWriter(self._rec_path, fourcc, self.rec_fps, (w, h))
+            if not wr.isOpened():
+                raise RuntimeError("VideoWriter open 실패")
+            self._writer = wr
+            self._writer_size = (w, h)
+            self.get_logger().info(f"녹화 시작 → {self._rec_path} ({w}x{h}@{self.rec_fps:.0f})")
+        except Exception as e:
+            self.get_logger().warn(f"녹화 파일 생성 실패({e}) — HUD 표시만")
+            self._writer = False
+
+    def _rec_tick(self, frame):
+        # 렌더 루프에서 매 프레임 호출. recording 중이고 메인 프레임이 있으면
+        #  rec_fps 간격으로 파일에 기록(소스 해상도 바뀌면 첫 해상도로 resize).
+        if not self.recording or frame is None or self._writer is False:
+            return
+        now = time.time()
+        if (now - self._rec_last_write) < (1.0 / self.rec_fps):
+            return
+        h, w = frame.shape[:2]
+        if self._writer is None:
+            self._open_writer(w, h)
+            if not self._writer:       # None→False (실패) 또는 아직 미오픈
+                return
+        try:
+            import cv2
+            if (w, h) != self._writer_size:   # 소스 전환(폰↔OAK) 시 크기 맞춤
+                frame = cv2.resize(frame, self._writer_size)
+            # 표시 프레임은 RGB → VideoWriter 는 BGR 기대 → 채널 반전
+            self._writer.write(np.ascontiguousarray(frame[:, :, ::-1]))
+            self._rec_last_write = now
+        except Exception as e:
+            self.get_logger().warn(f"프레임 기록 실패({e}) — 녹화 중단")
+            self._close_writer()
+
+    def _close_writer(self):
+        wr = self._writer
+        self._writer = None
+        self._writer_size = None
+        if wr and wr is not False:
+            try:
+                wr.release()
+                self.get_logger().info(f"녹화 저장 완료 → {self._rec_path}")
+            except Exception as e:
+                self.get_logger().warn(f"녹화 종료 실패({e})")
 
     @staticmethod
     def _decode(msg):
@@ -169,6 +275,7 @@ class UiNode(Node):
         #  (검은 PHONE 반쪽 방지) — OAK view 토글은 명시적이라 그대로 분할.
         split = oak_view or (state == "MENU" and self.phone_frame is not None)
         bg = self.phone_frame if self.phone_frame is not None else self.oak_frame
+        self._rec_tick(bg)   # REC ON 이면 메인 영상(폰 없으면 OAK)을 파일에 기록
         self.hud.draw(self.screen, self.snap, mode=self.mode, battery=self.battery,
                       recording=self.recording, rec_start=self.rec_start,
                       frame=(self.phone_frame if split else bg),
@@ -195,6 +302,7 @@ class UiNode(Node):
 
     def _quit_ui(self):
         # ESC/창닫기 = UI만이 아니라 전체 솔캠 스택을 정지(노드 중첩 방지).
+        self._close_writer()       # 녹화 중이면 파일 안전 마무리
         self._stop_full_stack()
         pg = self.pygame
         self._closing = True       # main 루프가 _closing 보고 빠져나가 정상 종료
@@ -304,6 +412,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            node._close_writer()     # 녹화 파일 안전 마무리(이중 호출 안전)
+        except Exception:
+            pass
         try:
             if node.pygame is not None:
                 node.pygame.quit()   # 창/리소스 정리(이중 호출 안전)

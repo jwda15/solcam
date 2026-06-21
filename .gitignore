@@ -13,6 +13,11 @@ __pycache__/
 # 임시/체크 파일
 _check.txt
 
+# 녹화(REC) 출력 영상(런타임 생성) — 폴더(.gitkeep)는 유지, 영상만 제외
+/Output/*.mp4
+/Output/*.avi
+/Output/*.mkv
+
 # 모델 가중치/아카이브 (zoo 자동다운로드하거나 별도 관리; git에 넣지 않음)
 *.tar.xz
 *.blob
