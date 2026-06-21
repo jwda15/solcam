@@ -46,7 +46,9 @@ struct ControllerParams
   //  상단 yaw 게인 (카메라를 주인에 락온; NEMA17+A4988 스텝 → 위치 명령)
   // ------------------------------------------------------------------------
   double kp_yaw  = 0.7;     // azimuth → 상단yaw 목표각 보정 게인 (position모드 전용)
-  double az_dead = 0.03;    // rad, azimuth 불감대 (이 안이면 상단yaw 정지)
+  double az_dead = 0.10;    // rad, azimuth 불감대 (이 안이면 상단yaw 정지)
+                            //  ★velocity모드 중앙정지 영역. 너무 예민(0.03)해서
+                            //   ~0.10(±5.7°)로 둔감화. 더 둔감: 키우기 / 더 민감: 줄이기.
   // ★상단 yaw 펌웨어 제어 방식:
   //   true  = velocity(방향) 모드 — top_yaw_target 의 부호=회전방향, |값|이 펌웨어
   //           deadband 초과면 고정속도 회전(현 펌웨어). 절대각 추적 아님.

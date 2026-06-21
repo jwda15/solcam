@@ -141,7 +141,9 @@ class UiNode(Node):
     def _oak_img_cb(self, msg):
         f = self._decode(msg)
         if f is not None:
-            self.oak_frame = f
+            # 거울모드: OAK-D 영상을 좌우반전해 표시(보는 사람 기준 자연스러움).
+            #  hud._blit_cover 가 ascontiguousarray 로 다시 만드므로 view 로 충분.
+            self.oak_frame = f[:, ::-1]
 
     # ----- 렌더 -----
     def _render(self):

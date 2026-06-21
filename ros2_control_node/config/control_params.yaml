@@ -26,7 +26,10 @@ control_node:
 
     # ----- 상단 yaw 게인 (카메라 락온; 스텝=위치 명령) -----
     kp_yaw: 0.7             # azimuth → 목표각 보정 게인 (position모드 전용)
-    az_dead: 0.03           # rad, azimuth 불감대 (이 안이면 상단yaw 정지)
+    az_dead: 0.10           # rad, azimuth 불감대 (이 안이면 상단yaw 정지)
+                            #  ★velocity모드 중앙정지 영역. 0.03=너무 예민 → ~0.10(±5.7°).
+                            #  control_node 재시작이면 바로 반영. 더 둔감=↑ / 더 민감=↓
+                            #  (멈췄다 돌았다 떨리면(hunting) 더 키울 것)
     yaw_velocity_mode: true # ★현 펌웨어=velocity(방향)모드. top_yaw_target 부호=회전방향
     top_yaw_sign: 1.0       # 회전 방향이 실제와 반대면 -1.0 (실차 확인 후 보정)
 
