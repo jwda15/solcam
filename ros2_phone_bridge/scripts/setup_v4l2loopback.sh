@@ -5,7 +5,8 @@ set -e
 DEV_NR="${1:-2}"
 if ! lsmod | grep -q v4l2loopback; then
   echo "[setup] v4l2loopback 로드 (/dev/video${DEV_NR})"
-  sudo modprobe v4l2loopback video_nr="${DEV_NR}" card_label="solcam_phone" exclusive_caps=1
+  # ★exclusive_caps=0 필수. =1 이면 scrcpy 가 sink 헤더를 못 써 즉사("Failed to write header").
+  sudo modprobe v4l2loopback video_nr="${DEV_NR}" card_label="solcam_phone" exclusive_caps=0
 else
   echo "[setup] v4l2loopback 이미 로드됨"
 fi

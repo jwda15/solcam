@@ -271,7 +271,7 @@ class PhoneBridge(Node):
                 self.get_logger().error(
                     "v4l2 장치 꼬임 감지 — 수동 리로드 필요: "
                     "sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback "
-                    "video_nr=N card_label=solcam_phone exclusive_caps=1. "
+                    "video_nr=N card_label=solcam_phone exclusive_caps=0. "
                     "v4l2_reset_cmd 파라미터를 주면 자동 복구함.")
                 self._wedge_warned = True
             return
