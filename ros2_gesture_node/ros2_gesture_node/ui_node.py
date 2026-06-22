@@ -28,9 +28,11 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from std_msgs.msg import Bool, Int32, String, Float32
+from std_msgs.msg import Bool, Int32, String, Float32, Empty
 from sensor_msgs.msg import Image, BatteryState
 from geometry_msgs.msg import Twist
+
+from ros2_control_node.msg import ControlDebug
 
 # 키보드 수동주행 모드 이름(오버레이 표시용). ASCII 영문만 — pygame 기본 폰트가
 # 한글/화살표 글리프가 없어 □로 깨지기 때문.
@@ -69,12 +71,20 @@ class UiNode(Node):
         self._rec_path = None
         self._rec_last_write = 0.0 # 마지막 프레임 기록 시각(fps 게이트)
 
+        # ----- 튜닝 표시(좌하단) / OAK 0점 플래시 상태 -----
+        self._have_debug = False
+        self.cur_dist = self.cur_az = 0.0   # 현재 주인 거리[m]/방위각[rad]
+        self.tgt_dist = self.tgt_az = 0.0   # 타겟 거리[m]/방위각[rad]
+        self._yaw_flash_until = 0.0         # 하단 흰 선 플래시 종료시각
+
         self.create_subscription(String, "/gesture_ui", self._ui_cb, 10)
         self.create_subscription(Int32, "/control_mode", self._mode_cb, 10)
         self.create_subscription(BatteryState, "/phone/battery", self._batt_cb, 10)
         self.create_subscription(Bool, "/phone/recording", self._rec_cb, 10)
         self.create_subscription(String, "/phone_cmd", self._phone_cmd_cb, 10)
         self.create_subscription(Float32, "/phone/zoom", self._zoom_cb, 10)
+        self.create_subscription(ControlDebug, "/control_debug", self._debug_cb, 10)
+        self.create_subscription(Empty, "/yaw_set_zero", self._yaw_zero_cb, 10)
         self.create_subscription(
             Image, str(self.get_parameter("video_topic").value), self._phone_img_cb,
             qos_profile_sensor_data)
@@ -147,6 +157,18 @@ class UiNode(Node):
 
     def _zoom_cb(self, msg):
         self.phone_zoom = float(msg.data)
+
+    def _debug_cb(self, msg):
+        # control_node /control_debug → 좌하단 튜닝 표시값.
+        self.cur_dist = float(msg.owner_distance)
+        self.cur_az = float(msg.owner_azimuth)
+        self.tgt_dist = float(msg.target_distance)
+        self.tgt_az = float(msg.target_azimuth)
+        self._have_debug = True
+
+    def _yaw_zero_cb(self, _msg):
+        # OAK 케이블 0점 지정 완료 → 하단 흰 선 0.3s 깜빡.
+        self._yaw_flash_until = time.time() + 0.3
 
     # ----- 녹화(REC) → 파일 -----
     def _resolve_output_dir(self, param_val):
@@ -284,7 +306,28 @@ class UiNode(Node):
             self._draw_mode_overlay()
         elif self.teleop_on:
             self._draw_teleop_status()   # 포커스 상태 + 키 입력값(진단/안내)
+        self._draw_tuning_text()         # 좌하단 현재/타겟 거리·방위각
+        self._draw_yaw_flash()           # 하단 OAK 0점 지정 흰 선 플래시
         pg.display.flip()
+
+    def _draw_tuning_text(self):
+        # 좌하단: 현재 주인 거리/방위각(흰), 타겟 거리/방위각(파랑). 튜닝용.
+        if not self._have_debug:
+            return
+        pg = self.pygame
+        h = self.screen.get_size()[1]
+        cur = "cur  d=%.2fm  az=%+.1f" % (self.cur_dist, math.degrees(self.cur_az))
+        tgt = "tgt  d=%.2fm  az=%+.1f" % (self.tgt_dist, math.degrees(self.tgt_az))
+        self.screen.blit(self.kfont.render(cur, True, (235, 235, 235)), (12, h - 46))
+        self.screen.blit(self.kfont.render(tgt, True, (110, 170, 245)), (12, h - 24))
+
+    def _draw_yaw_flash(self):
+        # OAK 케이블 0점 지정 직후 0.3s 동안 화면 맨 하단에 얇은 흰 선 1줄.
+        if time.time() >= self._yaw_flash_until:
+            return
+        pg = self.pygame
+        w, h = self.screen.get_size()
+        pg.draw.rect(self.screen, (255, 255, 255), (0, h - 3, w, 3))
 
     def _draw_teleop_status(self):
         # 키보드 주행 진단/안내(ASCII, 기본폰트). 포커스 있으면 실시간 vx/vy/wz,

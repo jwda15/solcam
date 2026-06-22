@@ -25,7 +25,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from std_msgs.msg import Bool, Int32, String
+from std_msgs.msg import Bool, Int32, String, Empty
 from sensor_msgs.msg import Image
 
 from ros2_control_node.msg import AdjustCmd
@@ -65,6 +65,10 @@ class GestureNode(Node):
         #  orbit: 검지 좌=CCW(+φ)  /  spin: 쓰리건 우=CCW(+off), 좌=CW(−off)
         self.declare_parameter("orbit_sign", 1.0)
         self.declare_parameter("spin_sign", 1.0)
+        # rock_on(검지+새끼) = OAK 케이블 0도 지정. 메뉴와 독립.
+        self.declare_parameter("rockon_hold", 0.5)       # s, 유지해야 발동
+        self.declare_parameter("rockon_cooldown", 3.0)   # s, 발동 후 재명령 차단(꼬임 정리 시간)
+        self.declare_parameter("rockon_dropout", 0.4)    # s, 짧은 인식 끊김 허용
         self.declare_parameter("repo_dir", os.environ.get("SOLCAM_REPO", os.path.expanduser("~/solcam")))
         gp = lambda n: self.get_parameter(n).value
 
@@ -85,6 +89,14 @@ class GestureNode(Node):
         self.menu_period = 1.0 / float(gp("menu_rate"))
         self._last_infer_t = 0.0
         self.ui_flags = {"oak_view": False}
+
+        # rock_on 홀드 상태 (메뉴 상태기계와 완전 분리)
+        self._rockon_hold = float(gp("rockon_hold"))
+        self._rockon_cooldown = float(gp("rockon_cooldown"))
+        self._rockon_dropout = float(gp("rockon_dropout"))
+        self._rockon_start = None       # rock_on 연속 유지 시작시각
+        self._rockon_last_seen = 0.0    # 마지막으로 rock_on 본 시각(드롭아웃 허용용)
+        self._rockon_block_until = 0.0  # 이 시각까지는 재발동 차단
 
         rtype = str(gp("recognizer"))
         self.mock_mode = rtype == "mock"
@@ -112,6 +124,9 @@ class GestureNode(Node):
         self.pub_phone = self.create_publisher(String, "/phone_cmd", 10)
         self.pub_system = self.create_publisher(String, "/system_cmd", 10)
         self.pub_ui = self.create_publisher(String, "/gesture_ui", 10)
+        # OAK 케이블 0도 지정 트리거(메뉴 밖). control_node=데드레코닝 0 재설정,
+        #  ui_node=하단 흰 선 0.3s 플래시. 둘 다 같은 토픽 구독.
+        self.pub_yaw_zero = self.create_publisher(Empty, "/yaw_set_zero", 10)
 
     # ----- 입력 경로 ------------------------------------------------------
     def _now(self) -> float:
@@ -167,7 +182,28 @@ class GestureNode(Node):
         return raw                            # like/dislike/gun_*/two/three/four 그대로
 
     # ----- 사건 → 토픽 ----------------------------------------------------
+    def _handle_rockon(self, raw_label, t):
+        # 메뉴 상태기계와 독립적으로 rock_on(검지+새끼) 0.5s 홀드를 감지해
+        #  /yaw_set_zero 발행. 발동 후 cooldown 동안은 무시(꼬임 정리 + 중복 방지).
+        #  짧은 인식 끊김(dropout)은 허용해 홀드가 쉽게 풀리지 않게 한다.
+        if t < self._rockon_block_until:
+            self._rockon_start = None
+            return
+        if raw_label == "rock_on":
+            self._rockon_last_seen = t
+            if self._rockon_start is None:
+                self._rockon_start = t
+            elif (t - self._rockon_start) >= self._rockon_hold:
+                self.pub_yaw_zero.publish(Empty())
+                self.get_logger().info("rock_on 0.5s → OAK 케이블 0도 지정(/yaw_set_zero)")
+                self._rockon_start = None
+                self._rockon_block_until = t + self._rockon_cooldown
+        elif self._rockon_start is not None and \
+                (t - self._rockon_last_seen) > self._rockon_dropout:
+            self._rockon_start = None   # 다른 동작/장시간 끊김 → 홀드 취소
+
     def _step(self, raw_label, t):
+        self._handle_rockon(raw_label, t)   # 메뉴와 무관하게 항상 먼저 처리
         label = self._to_menu_label(raw_label)
         # 도움말 오버레이 표시 중: 메뉴 입력 차단, 역따봉(뒤로)/따봉으로 닫기.
         if self.ui_flags.get("help"):

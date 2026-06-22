@@ -23,6 +23,7 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/float32.hpp"
+#include "std_msgs/msg/empty.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 
@@ -59,6 +60,7 @@ private:
   void topYawCallback(const std_msgs::msg::Float32::SharedPtr msg);
   void modeCallback(const std_msgs::msg::Int32::SharedPtr msg);
   void gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg);
+  void yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr msg);
   void adjustCallback(const ros2_control_node::msg::AdjustCmd::SharedPtr msg);
   void proximityCallback(const ros2_control_node::msg::ProximityArray::SharedPtr msg);
 
@@ -73,6 +75,10 @@ private:
   void publishStop();
   void publish(const ControlCommand & cmd);
   void publishDebug(const ControlCommand & cmd, const ControlInput & in);
+  // 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운. ctrl->step() 뒤 cmd 후처리.
+  //  명령부호로 head_angle_ 적분, 한계 넘으면 정지, 쿨다운 중엔 완전정지.
+  void applyTopYawGuard(ControlCommand & cmd, double dt);
+  double targetDistanceForMode();   // UI/디버그용: 현재 모드의 유지 목표거리[m]
   bool ownerTimedOut() const;
   bool odomTimedOut() const;
   bool proximityTimedOut() const;
@@ -88,7 +94,10 @@ private:
   Mode        mode_ = Mode::IDLE;
   OwnerState  owner_;
   RobotOdom   odom_;
-  double      theta_head_ = 0.0;     // 상단 yaw 현재 각 [rad]
+  double      theta_head_ = 0.0;     // /top_yaw_state 피드백(있을 때만; 보통 미발행)
+  double      head_angle_ = 0.0;     // ★데드레코닝 상단yaw 현재각[rad] (0=부팅/0점지정).
+                                     //  제어/추정/한계판정의 실제 기준값.
+  rclcpp::Time yaw_zero_block_until_; // 이 시각까지 상단yaw 정지(0점 지정 쿨다운)
   double      odom_wz_ = 0.0;        // 오도메트리 측정 몸체 yaw rate [rad/s]
   double      prev_theta_head_ = 0.0;    // 상단 yaw 속도 추정용 직전값
   bool        have_prev_theta_ = false;
@@ -124,6 +133,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr top_yaw_sub_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr mode_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr gesture_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr yaw_zero_sub_;
   rclcpp::Subscription<ros2_control_node::msg::AdjustCmd>::SharedPtr adjust_sub_;
   rclcpp::Subscription<ros2_control_node::msg::ProximityArray>::SharedPtr proximity_sub_;
   rclcpp::TimerBase::SharedPtr control_timer_;

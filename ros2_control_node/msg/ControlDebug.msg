@@ -18,3 +18,9 @@ float32 top_yaw_target     # rad, 상단 yaw 목표각 (발행값과 동일)
 float32 cmd_vx             # m/s, 실제 발행된 몸체 속도 (클램프 후)
 float32 cmd_vy             # m/s
 float32 cmd_wz             # rad/s
+
+# UI 튜닝 표시용: 현재(측정) vs 타겟(유지목표) 주인 거리/방위각
+float32 owner_distance     # m, 현재 주인 수평거리 (카메라 측정)
+float32 owner_azimuth      # rad, 현재 주인 방위각 (+우측)
+float32 target_distance    # m, 유지 목표 거리 (모드별)
+float32 target_azimuth     # rad, 유지 목표 방위각 (락온=0)

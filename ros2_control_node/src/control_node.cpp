@@ -63,6 +63,9 @@ ControlNode::ControlNode()
   gesture_sub_ = this->create_subscription<std_msgs::msg::Bool>(
     "/gesture_active", 10,
     std::bind(&ControlNode::gestureActiveCallback, this, _1));
+  yaw_zero_sub_ = this->create_subscription<std_msgs::msg::Empty>(
+    "/yaw_set_zero", 10,
+    std::bind(&ControlNode::yawSetZeroCallback, this, _1));
   adjust_sub_ = this->create_subscription<AdjustCmd>(
     "/adjust_cmd", 10, std::bind(&ControlNode::adjustCallback, this, _1));
   proximity_sub_ = this->create_subscription<ros2_control_node::msg::ProximityArray>(
@@ -81,6 +84,7 @@ ControlNode::ControlNode()
   last_step_time_      = this->now();
   last_lift_cmd_time_  = this->now();
   last_wheel_cmd_time_ = this->now();
+  yaw_zero_block_until_ = this->now();   // 시작 시점=쿨다운 없음
 
   RCLCPP_INFO(this->get_logger(),
     "control_node 시작. rate=%.0fHz, mode=%d, seg_D=%.2fm, 회피=%s",
@@ -105,6 +109,8 @@ void ControlNode::declareParams()
   this->declare_parameter("top_lead_max", c.top_lead_max);
   this->declare_parameter("yaw_velocity_mode", c.yaw_velocity_mode);
   this->declare_parameter("top_yaw_sign",      c.top_yaw_sign);
+  this->declare_parameter("top_yaw_limit",     c.top_yaw_limit);
+  this->declare_parameter("top_yaw_speed",     c.top_yaw_speed);
 
   // 몸체 위치 (선분 끝점 추종, PD)
   this->declare_parameter("kp_pos",   c.kp_pos);
@@ -151,6 +157,7 @@ void ControlNode::declareParams()
   this->declare_parameter("ctrl_rate",         n.ctrl_rate);
   this->declare_parameter("lift_cmd_timeout",  n.lift_cmd_timeout);
   this->declare_parameter("wheel_cmd_timeout", n.wheel_cmd_timeout);
+  this->declare_parameter("yaw_zero_cooldown", n.yaw_zero_cooldown);
   this->declare_parameter("owner_timeout",     n.owner_timeout);
   this->declare_parameter("odom_timeout",      n.odom_timeout);
   this->declare_parameter("proximity_timeout", n.proximity_timeout);
@@ -169,6 +176,8 @@ void ControlNode::loadParams()
   params_.top_lead_max = this->get_parameter("top_lead_max").as_double();
   params_.yaw_velocity_mode = this->get_parameter("yaw_velocity_mode").as_bool();
   params_.top_yaw_sign      = this->get_parameter("top_yaw_sign").as_double();
+  params_.top_yaw_limit     = this->get_parameter("top_yaw_limit").as_double();
+  params_.top_yaw_speed     = this->get_parameter("top_yaw_speed").as_double();
 
   params_.kp_pos   = this->get_parameter("kp_pos").as_double();
   params_.kd_pos   = this->get_parameter("kd_pos").as_double();
@@ -207,6 +216,7 @@ void ControlNode::loadParams()
   node_params_.ctrl_rate         = this->get_parameter("ctrl_rate").as_double();
   node_params_.lift_cmd_timeout  = this->get_parameter("lift_cmd_timeout").as_double();
   node_params_.wheel_cmd_timeout = this->get_parameter("wheel_cmd_timeout").as_double();
+  node_params_.yaw_zero_cooldown = this->get_parameter("yaw_zero_cooldown").as_double();
   node_params_.owner_timeout     = this->get_parameter("owner_timeout").as_double();
   node_params_.odom_timeout      = this->get_parameter("odom_timeout").as_double();
   node_params_.proximity_timeout = this->get_parameter("proximity_timeout").as_double();
@@ -288,6 +298,17 @@ void ControlNode::gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg
   }
 }
 
+// rock_on(검지+새끼) 0.5s → OAK 케이블이 안전하게 풀린 "지금"을 0도로 지정.
+//  데드레코닝 현재각을 0으로 리셋하고, cooldown 동안 상단yaw 를 정지(꼬임 정리).
+void ControlNode::yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr)
+{
+  head_angle_ = 0.0;
+  yaw_zero_block_until_ =
+    this->now() + rclcpp::Duration::from_seconds(node_params_.yaw_zero_cooldown);
+  RCLCPP_INFO(this->get_logger(),
+    "OAK 0점 지정: 데드레코닝각=0, %.1fs 정지", node_params_.yaw_zero_cooldown);
+}
+
 // 손동작 조정 명령 라우팅 (AdjustCmd.msg 의 param 상수 참조).
 //  새 손동작 기능 추가 시: msg 에 상수 추가 + 여기 case 한 줄 (확장 지점).
 void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
@@ -360,8 +381,8 @@ void ControlNode::controlStep()
 
   //    상단 yaw 각속도 추정 (지연 보상용; 스텝 피드백이라 미분 노이즈 적음)
   double theta_rate = 0.0;
-  if (have_prev_theta_) { theta_rate = (theta_head_ - prev_theta_head_) / dt; }
-  prev_theta_head_ = theta_head_;
+  if (have_prev_theta_) { theta_rate = (head_angle_ - prev_theta_head_) / dt; }
+  prev_theta_head_ = head_angle_;
   have_prev_theta_ = true;
 
   //    카메라 지연 보상 (기본 camera_latency=0 → 비활성):
@@ -379,7 +400,7 @@ void ControlNode::controlStep()
   }
 
   //    StateEstimator로 주인 글로벌 위치 추정 (오도메트리+상단yaw각+카메라)
-  bool est_ok = estimator_.update(odom_, theta_head_, owner_obs);
+  bool est_ok = estimator_.update(odom_, head_angle_, owner_obs);
 
   // 3) 제어 입력 묶음 구성
   ControlInput in;
@@ -387,7 +408,7 @@ void ControlNode::controlStep()
   in.robot = odom_;
   in.owner_global = estimator_.ownerGlobal();
   in.owner_global_valid = est_ok && !ownerTimedOut() && !odomTimedOut();
-  in.theta_head = theta_head_;
+  in.theta_head = head_angle_;   // ★데드레코닝 현재각 (스테이지 위치피드백 없음)
   // 리프트 시간기반: 최근 lift_cmd_timeout 안에 손동작 명령이 있었으면 active.
   //  손을 떼면(명령 끊김) active=false → 제어기가 lift_active=false 로 정지시킴.
   adjust_.lift_active_now =
@@ -436,6 +457,10 @@ void ControlNode::controlStep()
 
   // 5) 제어 스텝
   ControlCommand cmd = ctrl->step(in);
+
+  // 5.5) 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운 (상단yaw 명령 후처리).
+  //   각도가 아닌 명령시간으로 제어하므로 현재각을 여기서 적분·판정한다.
+  applyTopYawGuard(cmd, dt);
 
   // 6) 장애물 회피: 몸체 속도만 깎음(목표는 불변 → 회피 후 자연 복귀)
   if (obstacle_params_.enabled) {
@@ -543,7 +568,55 @@ void ControlNode::publishDebug(const ControlCommand & cmd, const ControlInput & 
   d.cmd_vx             = static_cast<float>(cmd.body_vx);
   d.cmd_vy             = static_cast<float>(cmd.body_vy);
   d.cmd_wz             = static_cast<float>(cmd.body_yaw_rate);
+  // UI 튜닝 표시: 현재 주인 거리/방위각 vs 유지 목표 거리/방위각.
+  //  방위각 목표는 락온 기준 0(주인을 화면 중앙). 거리 목표는 모드별 유지거리.
+  d.owner_distance     = static_cast<float>(in.owner.distance);
+  d.owner_azimuth      = static_cast<float>(in.owner.azimuth);
+  d.target_distance    = static_cast<float>(targetDistanceForMode());
+  d.target_azimuth     = 0.0f;
   debug_pub_->publish(d);
+}
+
+// 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운.
+//  velocity 모드: cmd.top_yaw_target 부호=회전방향, 0=정지. 현재각 피드백이
+//  없으므로 명령부호×top_yaw_speed×dt 를 적분해 head_angle_ 를 추정한다.
+void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt)
+{
+  // 0점 지정 직후 쿨다운: 상단yaw 완전 정지(케이블이 풀린 상태 그대로 유지).
+  if (this->now() < yaw_zero_block_until_) {
+    cmd.top_yaw_target = 0.0;
+    cmd.top_yaw_active = false;
+    return;
+  }
+
+  bool moving = cmd.top_yaw_active && std::abs(cmd.top_yaw_target) > 1e-6;
+  if (!moving) { return; }
+
+  double dir = (cmd.top_yaw_target > 0.0) ? 1.0 : -1.0;   // 보낼 명령의 회전 방향
+  // ±한계 방어: 이 방향으로 더 돌면 한계를 넘는 경우 정지(OAK 케이블 보호).
+  //  (head_angle_ 부호는 "보내는 명령부호" 기준 — 한계가 대칭이라 좌우 일관).
+  if ((dir > 0.0 && head_angle_ >= params_.top_yaw_limit) ||
+      (dir < 0.0 && head_angle_ <= -params_.top_yaw_limit)) {
+    cmd.top_yaw_target = 0.0;   // velocity 모드: 0=정지
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+      "상단yaw ±한계(%.0f°) 도달 → 정지", params_.top_yaw_limit * 180.0 / M_PI);
+    return;
+  }
+  // 한계 안: 명령시간만큼 각도 적분(다음 스텝 한계판정 기준).
+  head_angle_ += dir * params_.top_yaw_speed * dt;
+  if (head_angle_ >  params_.top_yaw_limit) { head_angle_ =  params_.top_yaw_limit; }
+  if (head_angle_ < -params_.top_yaw_limit) { head_angle_ = -params_.top_yaw_limit; }
+}
+
+// 현재 모드가 유지하려는 목표 거리[m] (UI/디버그 표시용).
+double ControlNode::targetDistanceForMode()
+{
+  switch (mode_) {
+    case Mode::FOLLOW:  return follow_controller_.segDistance();
+    case Mode::FOLLOW2: return follow2_controller_.leashDistance();
+    case Mode::ORBIT:   return orbit_controller_.orbitRadius();
+    default:            return params_.seg_distance;   // IDLE/ROTATE: 기본값
+  }
 }
 
 }  // namespace control_node

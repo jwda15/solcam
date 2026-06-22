@@ -14,6 +14,7 @@
         (손가락-개수 맥락에선 노드가 'one'(=검지 1개)으로 변환)
   gun_left / gun_right                   : 쓰리건(엄지+검지+중지) 좌우 = 자전
   two / three / four                     : 손가락 개수 (two=V는 휠에서 리셋)
+  rock_on                                : 검지+새끼 = OAK 케이블 0도 지정(메뉴 밖)
 
 ★MediaPipe 는 파이썬 3.14 휠이 없을 수 있음(3.8~3.12 권장). 잿슨(JetPack 3.10) OK.
   PC 미리보기는 Mock/키보드로(아래 ui_preview_tk) 동작 확인.
@@ -123,6 +124,12 @@ class MediaPipeHandsRecognizer(Recognizer):
             if idir in ("left", "right"):
                 return "gun_" + idir
             return None   # 세로 쓰리건은 미사용
+
+        # rock on(검지+새끼만 폄, 중지·약지 굽힘) → OAK 케이블 0도 지정용 특수동작.
+        #  엄지 무관. point(검지만)/three/four 와 손가락 조합이 겹치지 않아 안전.
+        #  (메뉴 어휘 아님 — gesture_node 가 메뉴와 별개로 0.5s 홀드를 본다)
+        if idx and not mid and not rng and pky:
+            return "rock_on"
 
         # 권총(검지만) → 방향
         if idx and not mid and not rng and not pky:

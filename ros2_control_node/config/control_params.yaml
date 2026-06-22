@@ -32,6 +32,11 @@ control_node:
                             #  (멈췄다 돌았다 떨리면(hunting) 더 키울 것)
     yaw_velocity_mode: true # ★현 펌웨어=velocity(방향)모드. top_yaw_target 부호=회전방향
     top_yaw_sign: 1.0       # 회전 방향이 실제와 반대면 -1.0 (실차 확인 후 보정)
+    top_yaw_limit: 1.5708   # rad, 상단yaw ±안전회전한계(기본 90°). OAK 케이블 보호.
+                            #  데드레코닝 현재각이 이 값 넘으면 정지. 마진=↓(예 1.45=83°).
+                            #  펌웨어도 ±800step(90°)서 하드정지 → 이 값 ≤90° 권장.
+    top_yaw_speed: 0.49087  # rad/s, 스테이지 회전속도(데드레코닝용)=펌웨어 28.125°/s.
+                            #  실제 회전과 누적각이 어긋나면 이 값으로 보정.
 
     # ----- 몸체 위치 게인 (선분 끝점 추종, PD) -----
     kp_pos: 0.7             # 위치오차[m] → 속도[m/s] (P)
@@ -86,6 +91,7 @@ control_node:
     ctrl_rate: 50.0         # Hz
     lift_cmd_timeout: 0.3   # s, 리프트 손동작 끊기면 이 시간 뒤 정지(시간기반)
     wheel_cmd_timeout: 0.4  # s, 메뉴 중 휠 명령(거리/공전/팬) 끊기면 이 시간 뒤 몸체 정지
+    yaw_zero_cooldown: 3.0  # s, rock_on 으로 OAK 0점 지정 직후 상단yaw 정지 유지 시간
     owner_timeout: 0.5      # s
     odom_timeout: 0.5       # s
     proximity_timeout: 0.3  # s
