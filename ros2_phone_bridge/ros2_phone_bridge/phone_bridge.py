@@ -324,6 +324,11 @@ class PhoneBridge(Node):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 지연/스테일 프레임 최소화
         except Exception:
             pass
+        # 어떤 백엔드로 열렸는지 로그 — V4L2 가 아니면(예: GSTREAMER) fps 폭락.
+        try:
+            self.get_logger().info(f"capture 백엔드={cap.getBackendName()} @ {self.video_device}")
+        except Exception:
+            pass
         self.cap = cap
 
     def _tick_image_mock(self):
