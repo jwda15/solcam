@@ -165,9 +165,12 @@ class PhoneBridge(Node):
         cmd = [self.scrcpy_bin, "--video-source=camera",
                f"--camera-facing={self.camera_facing}",
                f"--camera-size={self.camera_size}",
-               f"--camera-zoom={self.zoom:.2f}",   # scrcpy v4.0+ 센서 줌(범위 밖은 scrcpy가 클램프)
                f"--v4l2-sink={self.video_device}",
                "--no-audio", "--no-window", "--no-playback"]
+        # --camera-zoom 은 scrcpy 4.0+ 전용. 3.x 에선 이 플래그가 있으면 즉시 종료되므로
+        #  줌이 1.0 이 아닐 때(실제 줌 사용 시)만 붙인다. (잿슨 scrcpy=3.3.4)
+        if abs(self.zoom - 1.0) > 1e-3:
+            cmd.insert(4, f"--camera-zoom={self.zoom:.2f}")
         if self.adb_serial:
             cmd += ["-s", self.adb_serial]
         if self.scrcpy_extra:
@@ -304,7 +307,10 @@ class PhoneBridge(Node):
         if not self.mock and not self._device_format_ready():
             self.cap = None
             return
-        cap = cv2.VideoCapture(self.video_device)
+        # ★백엔드를 V4L2 로 못박는다. 미지정 시 잿슨 OpenCV 가 GStreamer 백엔드로
+        #  열어 v4l2loopback(YU12) 협상이 프레임당 ~0.45s 걸려 ~2Hz 로 추락한다.
+        #  CAP_V4L2 로 열면 장치 fps(30) 그대로 읽힌다(BUFFERSIZE 설정도 V4L2 경로에서 먹음).
+        cap = cv2.VideoCapture(self.video_device, cv2.CAP_V4L2)
         if not cap.isOpened():
             self.get_logger().warn(
                 f"{self.video_device} 열기 실패 — scrcpy/v4l2loopback 확인")
