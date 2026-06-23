@@ -21,6 +21,8 @@ gesture_node:
     bearing_step_deg: 8.0     # deg, 공전 1회 폭 (검지 좌=CCW/우=CW). 클수록 공전 빠름
     heading_step_deg: 15.0    # deg, 자전 1회 폭 (쓰리건 좌=CW/우=CCW)
     lift_step: 0.1            # m, 리프트 1회 폭 (검지 상=올림/하=내림)
+    jog_lin: 0.12             # m/s, 휠 jog 전후/좌우 속도 (로봇기준, odom無)
+    jog_ang: 0.6              # rad/s, 휠 jog 자전 각속도
     # 방향 부호: 실차에서 회전이 반대로 돌면 해당 값만 -1.0 으로 (메뉴/제어 안 건드림)
     orbit_sign: 1.0           # 공전: +1=검지 좌가 CCW
     spin_sign: 1.0            # 자전: +1=쓰리건 우가 CCW(좌=CW)

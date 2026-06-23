@@ -106,6 +106,7 @@ private:
   bool        owner_target_valid_ = false;  // 캡처 완료 여부(고정 타겟 사용)
   bool        gesture_active_ = false;   // 손동작 세션 중(몸체 일시정지)
   double      teleop_vx_ = 0.0, teleop_vy_ = 0.0, teleop_wz_ = 0.0;  // 키보드 teleop
+  double      jog_vx_ = 0.0, jog_vy_ = 0.0, jog_wz_ = 0.0;  // Wheel 로봇기준 jog(모든 모드)
   rclcpp::Time last_owner_time_;
   rclcpp::Time last_teleop_time_;
   rclcpp::Time last_odom_time_;
@@ -113,6 +114,7 @@ private:
   rclcpp::Time last_step_time_;
   rclcpp::Time last_lift_cmd_time_;   // 리프트 손동작 명령 마지막 수신(시간기반 제어)
   rclcpp::Time last_wheel_cmd_time_;  // 휠 명령(거리/공전/팬) 마지막 수신(메뉴 중 hold 해제용)
+  rclcpp::Time last_jog_time_;        // Wheel 로봇기준 jog 마지막 수신
 
   // ----- 부품 (전략 패턴: controllerFor()가 모드에 맞는 제어기 선택) -----
   IdleController   idle_controller_;     // 모드0: 정지 + 키보드 teleop

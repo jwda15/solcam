@@ -7,7 +7,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from ros2_gesture_node.menu import MenuStateMachine, build_menu
 
 STEPS = {"dist_step": 0.3, "seg_angle_step": math.radians(8.0),
-         "heading_step": math.radians(15.0), "lift_step": 0.1}
+         "heading_step": math.radians(15.0), "lift_step": 0.1,
+         "jog_lin": 0.12, "jog_ang": 0.6}
 
 
 def make_sm():
@@ -89,70 +90,57 @@ def test_more_submodes():
     assert acts and acts[0].action.payload == {"mode": 4}
 
 
-# ---------- 휠: 방향(권총) 공전/거리 ----------
-def test_wheel_orbit_directions():
-    sm = make_sm()
-    t = open_menu(sm)
-    t = nav(sm, "two", t)                         # Wheel
-    assert sm.path[-1].label == "Wheel"
-    evs, t = feed(sm, "p_left", t, 1.6)           # 좌 = 공전 CCW(+φ)
-    acts = [e for e in evs if e.kind == "action"]
-    assert acts and acts[0].action.payload["param"] == "SEG_ANGLE"
-    assert acts[0].action.payload["value"] > 0    # CCW = +
-    assert sm.state == "MENU"                      # stay=True → 유지
-    feed(sm, None, t, 0.5); t += 0.6
-    evs, t = feed(sm, "p_right", t, 1.6)          # 우 = 공전 CW(−φ)
-    acts = [e for e in evs if e.kind == "action"]
-    assert acts and acts[0].action.payload["value"] < 0
+# ---------- 휠: 로봇기준 jog (BODY_VX/VY/WZ, odom 무관) ----------
+def test_wheel_jog_translate():
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)   # Wheel
+    a = [e for e in feed(sm, "p_up", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["param"] == "BODY_VX" and a.payload["value"] > 0
+    assert a.payload["delta"] is False        # 절대 속도
+
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
+    a = [e for e in feed(sm, "p_down", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["param"] == "BODY_VX" and a.payload["value"] < 0
+
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
+    a = [e for e in feed(sm, "p_left", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["param"] == "BODY_VY" and a.payload["value"] > 0   # 좌 = +vy
 
 
-def test_wheel_distance_directions():
-    sm = make_sm()
-    t = open_menu(sm)
-    t = nav(sm, "two", t)                         # Wheel
-    evs, t = feed(sm, "p_up", t, 1.6)             # 상 = 멀어지기(+)
-    a = [e for e in evs if e.kind == "action"][0].action
-    assert a.payload["param"] == "SEG_DISTANCE" and a.payload["value"] > 0
-    feed(sm, None, t, 0.5); t += 0.6
-    evs, t = feed(sm, "p_down", t, 1.6)           # 하 = 가까이(−)
-    a = [e for e in evs if e.kind == "action"][0].action
-    assert a.payload["param"] == "SEG_DISTANCE" and a.payload["value"] < 0
-
-
-def test_wheel_spin_gun():
-    sm = make_sm()
-    t = open_menu(sm)
-    t = nav(sm, "two", t)                         # Wheel
-    evs, t = feed(sm, "gun_left", t, 1.6)         # 좌 = 자전 CW(−off)
-    a = [e for e in evs if e.kind == "action"][0].action
-    assert a.payload["param"] == "HEADING_OFFSET" and a.payload["value"] < 0
-    feed(sm, None, t, 0.5); t += 0.6
-    evs, t = feed(sm, "gun_right", t, 1.6)        # 우 = 자전 CCW(+off)
-    a = [e for e in evs if e.kind == "action"][0].action
-    assert a.payload["param"] == "HEADING_OFFSET" and a.payload["value"] > 0
-
-
-def test_wheel_reset_face_owner():
-    sm = make_sm()
-    t = open_menu(sm)
-    t = nav(sm, "two", t)                         # Wheel
-    evs, t = feed(sm, "two", t, 1.6)              # V = 촬영방향 리셋(단발)
-    acts = [e for e in evs if e.kind == "action"]
-    assert acts and acts[0].action.payload == {
-        "param": "HEADING_OFFSET", "value": 0.0, "delta": False}
-    assert acts[0].action.stay is False           # 연속 아님
+def test_wheel_jog_spin():
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
+    a = [e for e in feed(sm, "gun_left", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["param"] == "BODY_WZ" and a.payload["value"] < 0   # 좌 = 시계(CW,-)
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
+    a = [e for e in feed(sm, "gun_right", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["param"] == "BODY_WZ" and a.payload["value"] > 0   # 우 = 반시계(+)
 
 
 def test_wheel_jog_repeats_and_stops():
-    sm = make_sm()
-    t = open_menu(sm)
-    t = nav(sm, "two", t)                         # Wheel
-    evs, t = feed(sm, "p_left", t, 3.2)           # 공전 3.2초 유지
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
+    evs, t = feed(sm, "p_up", t, 3.2)             # 전진 3.2초 유지 → 연속 jog
     acts = [e for e in evs if e.kind == "action"]
-    assert len(acts) >= 5                         # 연속 발동
+    assert len(acts) >= 5 and all(a.action.payload["param"] == "BODY_VX" for a in acts)
     assert sm.snapshot()["hold_progress"] == 1.0
     evs, t = feed(sm, None, t, 0.6)               # 손 뗌 → 정지
     assert sm.snapshot()["hold_progress"] == 0.0
+
+
+# ---------- 휠 > More: 이전 odom 기반 명령 (V 자리) ----------
+def test_wheel_more_old_commands():
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)   # Wheel
+    t = nav(sm, "two", t)                                      # More (V 자리)
+    assert sm.path[-1].label == "More"
+    a = [e for e in feed(sm, "p_left", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["param"] == "SEG_ANGLE" and a.payload["value"] > 0   # 공전
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t); t = nav(sm, "two", t)
+    a = [e for e in feed(sm, "p_up", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["param"] == "SEG_DISTANCE" and a.payload["value"] > 0  # 거리
+
+
+def test_wheel_more_face_owner_reset():
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t); t = nav(sm, "two", t)
+    a = [e for e in feed(sm, "two", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload == {"param": "HEADING_OFFSET", "value": 0.0, "delta": False}
 
 
 # ---------- 리프트: 방향(권총) ----------

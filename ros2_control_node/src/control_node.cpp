@@ -84,6 +84,7 @@ ControlNode::ControlNode()
   last_step_time_      = this->now();
   last_lift_cmd_time_  = this->now();
   last_wheel_cmd_time_ = this->now();
+  last_jog_time_ = this->now() - rclcpp::Duration::from_seconds(10.0);  // 시작 시 jog 비활성
   yaw_zero_block_until_ = this->now();   // 시작 시점=쿨다운 없음
 
   RCLCPP_INFO(this->get_logger(),
@@ -110,6 +111,8 @@ void ControlNode::declareParams()
   this->declare_parameter("yaw_velocity_mode", c.yaw_velocity_mode);
   this->declare_parameter("top_yaw_sign",      c.top_yaw_sign);
   this->declare_parameter("top_yaw_limit",     c.top_yaw_limit);
+  this->declare_parameter("top_yaw_limit_pos", c.top_yaw_limit_pos);
+  this->declare_parameter("top_yaw_limit_neg", c.top_yaw_limit_neg);
   this->declare_parameter("top_yaw_speed",     c.top_yaw_speed);
 
   // 몸체 위치 (선분 끝점 추종, PD)
@@ -177,6 +180,8 @@ void ControlNode::loadParams()
   params_.yaw_velocity_mode = this->get_parameter("yaw_velocity_mode").as_bool();
   params_.top_yaw_sign      = this->get_parameter("top_yaw_sign").as_double();
   params_.top_yaw_limit     = this->get_parameter("top_yaw_limit").as_double();
+  params_.top_yaw_limit_pos = this->get_parameter("top_yaw_limit_pos").as_double();
+  params_.top_yaw_limit_neg = this->get_parameter("top_yaw_limit_neg").as_double();
   params_.top_yaw_speed     = this->get_parameter("top_yaw_speed").as_double();
 
   params_.kp_pos   = this->get_parameter("kp_pos").as_double();
@@ -292,9 +297,14 @@ void ControlNode::gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg
 {
   if (gesture_active_ != msg->data) {
     gesture_active_ = msg->data;
+    if (!gesture_active_) {
+      // 세션 종료(메뉴 닫힘) → 모드 재engage: Wheel jog로 바뀐 주인 거리/방향을 새 기준으로.
+      engaged_ = false;
+      owner_target_valid_ = false;
+    }
     RCLCPP_INFO(this->get_logger(),
       gesture_active_ ? "손동작 세션 시작 → 몸체 일시정지"
-                      : "손동작 세션 종료 → 주행 재개");
+                      : "손동작 세션 종료 → 주행 재개(기준 재캡처)");
   }
 }
 
@@ -317,7 +327,10 @@ void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
   //  (명령이 끊기면 wheel_cmd_timeout 뒤 다시 정지 → "줄 때만 움직임")
   if (msg->param == AdjustCmd::PARAM_SEG_DISTANCE ||
       msg->param == AdjustCmd::PARAM_SEG_ANGLE ||
-      msg->param == AdjustCmd::PARAM_HEADING_OFFSET) {
+      msg->param == AdjustCmd::PARAM_HEADING_OFFSET ||
+      msg->param == AdjustCmd::PARAM_BODY_VX ||
+      msg->param == AdjustCmd::PARAM_BODY_VY ||
+      msg->param == AdjustCmd::PARAM_BODY_WZ) {
     last_wheel_cmd_time_ = this->now();
   }
 
@@ -339,6 +352,18 @@ void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
       //  (last_lift_cmd_time_ 기준 lift_cmd_timeout), 끊기면 정지. applyLift 참조.
       adjust_.lift_dir = (msg->value >= 0.0f) ? +1 : -1;
       last_lift_cmd_time_ = this->now();
+      break;
+    case AdjustCmd::PARAM_BODY_VX:   // Wheel 로봇기준 전후 jog (단일축; 나머지 0)
+      jog_vx_ = msg->value; jog_vy_ = 0.0; jog_wz_ = 0.0;
+      last_jog_time_ = this->now();
+      break;
+    case AdjustCmd::PARAM_BODY_VY:   // Wheel 로봇기준 좌우 jog
+      jog_vy_ = msg->value; jog_vx_ = 0.0; jog_wz_ = 0.0;
+      last_jog_time_ = this->now();
+      break;
+    case AdjustCmd::PARAM_BODY_WZ:   // Wheel 로봇기준 자전 jog
+      jog_wz_ = msg->value; jog_vx_ = 0.0; jog_vy_ = 0.0;
+      last_jog_time_ = this->now();
       break;
     default:
       RCLCPP_WARN(this->get_logger(), "알 수 없는 adjust param: %d", msg->param);
@@ -457,6 +482,16 @@ void ControlNode::controlStep()
 
   // 5) 제어 스텝
   ControlCommand cmd = ctrl->step(in);
+
+  // 5.2) Wheel 로봇기준 jog: 메뉴 중 jog가 신선하면 모드 몸체출력을 수동 jog로 덮어쓴다
+  //   (odom 무관·모든 모드 공통). 상단yaw/리프트는 모드 그대로(카메라는 계속 주인 추적).
+  //   메뉴를 나가면 gestureActiveCallback 가 engaged_=false → 모드가 새 거리/방향 재캡처.
+  if (gesture_active_ &&
+      (now - last_jog_time_).seconds() < node_params_.wheel_cmd_timeout) {
+    cmd.body_vx = jog_vx_;
+    cmd.body_vy = jog_vy_;
+    cmd.body_yaw_rate = jog_wz_;
+  }
 
   // 5.5) 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운 (상단yaw 명령 후처리).
   //   각도가 아닌 명령시간으로 제어하므로 현재각을 여기서 적분·판정한다.
@@ -595,17 +630,18 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt)
   double dir = (cmd.top_yaw_target > 0.0) ? 1.0 : -1.0;   // 보낼 명령의 회전 방향
   // ±한계 방어: 이 방향으로 더 돌면 한계를 넘는 경우 정지(OAK 케이블 보호).
   //  (head_angle_ 부호는 "보내는 명령부호" 기준 — 한계가 대칭이라 좌우 일관).
-  if ((dir > 0.0 && head_angle_ >= params_.top_yaw_limit) ||
-      (dir < 0.0 && head_angle_ <= -params_.top_yaw_limit)) {
+  if ((dir > 0.0 && head_angle_ >=  params_.top_yaw_limit_pos) ||
+      (dir < 0.0 && head_angle_ <= -params_.top_yaw_limit_neg)) {
     cmd.top_yaw_target = 0.0;   // velocity 모드: 0=정지
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-      "상단yaw ±한계(%.0f°) 도달 → 정지", params_.top_yaw_limit * 180.0 / M_PI);
+      "상단yaw 한계(+%.1f°/-%.1f°) 도달 → 정지(케이블 보호)",
+      params_.top_yaw_limit_pos * 180.0 / M_PI, params_.top_yaw_limit_neg * 180.0 / M_PI);
     return;
   }
   // 한계 안: 명령시간만큼 각도 적분(다음 스텝 한계판정 기준).
   head_angle_ += dir * params_.top_yaw_speed * dt;
-  if (head_angle_ >  params_.top_yaw_limit) { head_angle_ =  params_.top_yaw_limit; }
-  if (head_angle_ < -params_.top_yaw_limit) { head_angle_ = -params_.top_yaw_limit; }
+  if (head_angle_ >  params_.top_yaw_limit_pos) { head_angle_ =  params_.top_yaw_limit_pos; }
+  if (head_angle_ < -params_.top_yaw_limit_neg) { head_angle_ = -params_.top_yaw_limit_neg; }
 }
 
 // 현재 모드가 유지하려는 목표 거리[m] (UI/디버그 표시용).

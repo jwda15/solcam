@@ -83,6 +83,8 @@ def build_menu(p: dict) -> MenuNode:
     dh = p["heading_step"]        # 자전/헤딩 1스텝 (rad, +CCW=좌)
     dd = p["dist_step"]           # 거리 1스텝 (m, +멀리)
     dl = p["lift_step"]           # 리프트 1스텝 (m, +올림)
+    jl = p["jog_lin"]            # 휠 jog 전후/좌우 속도 (m/s, 로봇기준)
+    ja = p["jog_ang"]            # 휠 jog 자전 각속도 (rad/s, 로봇기준)
 
     def adj(name, param, value, delta=True, stay=True):
         return MenuNode(name, action=Action(
@@ -99,18 +101,27 @@ def build_menu(p: dict) -> MenuNode:
                 "two": MenuNode("Orbit",   action=Action("mode", "Orbit",   {"mode": 4})),
             }),
         }),
-        # ── ② 휠(차체 이동) — 방향 손동작 ─────────────────────────
-        #   검지 ←/→ 공전(SEG_ANGLE) · 검지 ↑/↓ 거리(SEG_DISTANCE)
-        #   쓰리건 ←/→ 자전(HEADING_OFFSET) · V(two) 촬영방향 리셋
+        # ── ② 휠(차체 이동) — 로봇기준 순수 jog (odom 無, 모든 모드 공통) ─────
+        #   검지 ↑/↓ 전/후(BODY_VX) · 검지 ←/→ 좌/우 측면(BODY_VY)
+        #   쓰리건 ←/→ 자전 시계/반시계(BODY_WZ). delta=False(절대 속도, 손 떼면 정지).
+        #   메뉴를 나가면 모드가 '바뀐 주인 거리/방향'으로 재시작(control_node 재engage).
         "two": MenuNode("Wheel", children={
-            "p_left":  adj("Orbit CCW",  "SEG_ANGLE", +da),   # 좌 = 반시계 공전
-            "p_right": adj("Orbit CW",   "SEG_ANGLE", -da),   # 우 = 시계 공전
-            "p_up":    adj("Farther",    "SEG_DISTANCE", +dd),  # 상 = 멀어지기
-            "p_down":  adj("Closer",     "SEG_DISTANCE", -dd),  # 하 = 가까워지기
-            "gun_left":  adj("Spin CW",  "HEADING_OFFSET", -dh),  # 좌 = 시계 자전
-            "gun_right": adj("Spin CCW", "HEADING_OFFSET", +dh),  # 우 = 반시계 자전
-            # 촬영방향(몸체) 주인쪽으로 리셋 = 헤딩 오프셋 절대 0 (단발)
-            "two": adj("Face Owner", "HEADING_OFFSET", 0.0, delta=False, stay=False),
+            "p_up":    adj("Forward",  "BODY_VX", +jl, delta=False),  # 상 = 전진
+            "p_down":  adj("Backward", "BODY_VX", -jl, delta=False),  # 하 = 후진
+            "p_left":  adj("Left",     "BODY_VY", +jl, delta=False),  # 좌 = 좌측면(+vy)
+            "p_right": adj("Right",    "BODY_VY", -jl, delta=False),  # 우 = 우측면
+            "gun_left":  adj("Spin CW",  "BODY_WZ", -ja, delta=False),  # 좌 = 시계 자전
+            "gun_right": adj("Spin CCW", "BODY_WZ", +ja, delta=False),  # 우 = 반시계 자전
+            # V(two) → More: 이전 odom 기반 구도 조정(거리/공전/헤딩오프셋/리셋)
+            "two": MenuNode("More", children={
+                "p_left":  adj("Orbit CCW",  "SEG_ANGLE", +da),
+                "p_right": adj("Orbit CW",   "SEG_ANGLE", -da),
+                "p_up":    adj("Farther",    "SEG_DISTANCE", +dd),
+                "p_down":  adj("Closer",     "SEG_DISTANCE", -dd),
+                "gun_left":  adj("Pan L", "HEADING_OFFSET", +dh),
+                "gun_right": adj("Pan R", "HEADING_OFFSET", -dh),
+                "two": adj("Face Owner", "HEADING_OFFSET", 0.0, delta=False, stay=False),
+            }),
         }),
         # ── ③ 리프트 — 검지 상/하 ────────────────────────────────
         "three": MenuNode("Lift", children={

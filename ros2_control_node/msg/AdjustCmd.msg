@@ -25,3 +25,6 @@ int32 PARAM_SEG_DISTANCE=0     # 모드1 선분 거리 D [m]      (절대/증분
 int32 PARAM_SEG_ANGLE=1        # 모드1 선분 글로벌각 φ [rad] (절대/증분)
 int32 PARAM_HEADING_OFFSET=2   # 몸체 헤딩 오프셋 [rad]      (절대/증분)
 int32 PARAM_LIFT_HEIGHT=3      # 리프트 목표 높이 [m]        (절대/증분)
+int32 PARAM_BODY_VX=4          # 로봇기준 전후 속도 [m/s]   (휠 jog, odom 무관·모든 모드)
+int32 PARAM_BODY_VY=5          # 로봇기준 좌우 속도 [m/s]   (+ = 좌)
+int32 PARAM_BODY_WZ=6          # 로봇기준 자전 각속도 [rad/s] (+ = 반시계)

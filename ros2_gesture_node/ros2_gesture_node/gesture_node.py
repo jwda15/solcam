@@ -39,6 +39,9 @@ ADJUST_PARAMS = {
     "SEG_ANGLE": AdjustCmd.PARAM_SEG_ANGLE,
     "HEADING_OFFSET": AdjustCmd.PARAM_HEADING_OFFSET,
     "LIFT_HEIGHT": AdjustCmd.PARAM_LIFT_HEIGHT,
+    "BODY_VX": AdjustCmd.PARAM_BODY_VX,
+    "BODY_VY": AdjustCmd.PARAM_BODY_VY,
+    "BODY_WZ": AdjustCmd.PARAM_BODY_WZ,
 }
 DEG = math.pi / 180.0
 
@@ -61,6 +64,8 @@ class GestureNode(Node):
         self.declare_parameter("bearing_step_deg", 8.0)     # deg, 공전 1스텝
         self.declare_parameter("heading_step_deg", 15.0)    # deg, 자전/헤딩 1스텝
         self.declare_parameter("lift_step", 0.1)            # m, +올림
+        self.declare_parameter("jog_lin", 0.12)             # m/s, 휠 jog 전후/좌우
+        self.declare_parameter("jog_ang", 0.6)              # rad/s, 휠 jog 자전
         # 부호(실차에서 방향 반대면 여기만 뒤집기). +1 기준:
         #  orbit: 검지 좌=CCW(+φ)  /  spin: 쓰리건 우=CCW(+off), 좌=CW(−off)
         self.declare_parameter("orbit_sign", 1.0)
@@ -78,6 +83,8 @@ class GestureNode(Node):
             "seg_angle_step": float(gp("bearing_step_deg")) * DEG * float(gp("orbit_sign")),
             "heading_step": float(gp("heading_step_deg")) * DEG * float(gp("spin_sign")),
             "lift_step": float(gp("lift_step")),
+            "jog_lin": float(gp("jog_lin")),
+            "jog_ang": float(gp("jog_ang")),
         }
         self.sm = MenuStateMachine(
             build_menu(steps),

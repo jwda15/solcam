@@ -32,7 +32,9 @@ control_node:
                             #  (멈췄다 돌았다 떨리면(hunting) 더 키울 것)
     yaw_velocity_mode: true # ★현 펌웨어=velocity(방향)모드. top_yaw_target 부호=회전방향
     top_yaw_sign: 1.0       # 회전 방향이 실제와 반대면 -1.0 (실차 확인 후 보정)
-    top_yaw_limit: 1.5708   # rad, 상단yaw ±안전회전한계(기본 90°). OAK 케이블 보호.
+    top_yaw_limit: 1.5708   # (구) 대칭 한계 — 호환용. 가드는 아래 pos/neg 사용.
+    top_yaw_limit_pos: 0.0995  # rad, +방향 가드 — 실측: 추정 +5.7°에서 물리 +90°
+    top_yaw_limit_neg: 0.0698  # rad, -방향 가드 — 실측: 추정 -4°에서 물리 -90°
                             #  데드레코닝 현재각이 이 값 넘으면 정지. 마진=↓(예 1.45=83°).
                             #  펌웨어도 ±800step(90°)서 하드정지 → 이 값 ≤90° 권장.
     top_yaw_speed: 0.49087  # rad/s, 스테이지 회전속도(데드레코닝용)=펌웨어 28.125°/s.
