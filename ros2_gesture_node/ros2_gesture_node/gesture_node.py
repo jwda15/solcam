@@ -141,12 +141,32 @@ class GestureNode(Node):
         #  ui_node=하단 흰 선 0.3s 플래시. 둘 다 같은 토픽 구독.
         self.pub_yaw_zero = self.create_publisher(Empty, "/yaw_set_zero", 10)
 
+        # ----- 키보드 제스처 주입(ui_node /gesture_key) — 카메라 없이/대신 메뉴 조작 -----
+        #  L=like K=dislike 1~4=one~four 방향키=point_* Z/X=gun. 카메라 인식보다 우선.
+        self._key_label = None
+        self._key_time = 0.0
+        self.create_subscription(String, "/gesture_key", self._key_cb, 10)
+        self.create_timer(1.0 / 20.0, self._key_step)
+
     # ----- 입력 경로 ------------------------------------------------------
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
+    def _key_cb(self, msg):
+        lbl = str(msg.data).strip()
+        self._key_label = lbl if lbl else None
+        self._key_time = self._now()
+
+    def _key_step(self):
+        # 키보드 라벨이 신선하면(0.3s 내) 카메라 대신 그 라벨로 상태기계 구동.
+        t = self._now()
+        if self._key_label and (t - self._key_time) < 0.3:
+            self._step(self._key_label, t)
+
     def _image_cb(self, msg: Image):
         t = self._now()
+        if self._key_label and (t - self._key_time) < 0.3:
+            return   # 키보드 주입 중 → 카메라 인식 스킵(충돌 방지)
         period = self.menu_period if self.sm.state == "MENU" else self.idle_period
         if t - self._last_infer_t < period:
             return

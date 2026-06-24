@@ -116,6 +116,8 @@ class UiNode(Node):
         # 긴급정지: 스페이스바 누르는 동안 전 모드에서 휠·상단yaw·리프트 정지(/estop).
         self.pub_estop = self.create_publisher(Bool, "/estop", 10)
         self._estop_state = False
+        # 키보드로 손동작 흉내 → gesture_node 주입 (가짜 UI와 동일 스킴)
+        self.pub_gesture_key = self.create_publisher(String, "/gesture_key", 10)
         self.mode_select = False     # m 오버레이 상태
         self.last_key_mode = None    # 마지막으로 키로 바꾼 모드(표시용)
         self.cur_vx = self.cur_vy = self.cur_wz = 0.0
@@ -305,8 +307,11 @@ class UiNode(Node):
                     self.mode_select = True
         # 긴급정지: 스페이스바 누르는 동안 전 모드 정지(/estop). 변할 때만 발행.
         self._poll_estop()
-        # 키보드 수동주행: 매 프레임 키 상태 폴링 → /teleop_cmd 발행(대각선 동시키 지원)
-        if self.teleop_on and not self.mode_select:
+        # 키보드 손동작 흉내(가짜 UI 스킴): L=따봉 K=역따봉 1~4=개수 방향키=방향 Z/X=쓰리건.
+        menu_open = (self.snap.get("state") == "MENU")
+        self._poll_gesture_keys(menu_open)
+        # 키보드 수동주행: 메뉴 안 열렸을 때만(메뉴 중엔 방향키가 메뉴 조작용).
+        if self.teleop_on and not self.mode_select and not menu_open:
             self._teleop_poll()
         state = self.snap.get("state")
         # ----- OAK 버튼 사이클: 전체화면 ↔ 2분할 ↔ 반대 전체화면 -----
@@ -421,6 +426,32 @@ class UiNode(Node):
             self.get_logger().info("ESC → 전체 스택 정지(solcam.sh stop)")
         except Exception as e:
             self.get_logger().warn(f"전체 정지 실패({e}) — UI만 닫힘")
+
+    def _poll_gesture_keys(self, menu_open):
+        # 눌린 키를 정규 제스처 라벨로 /gesture_key 발행(누르는 동안 매 프레임).
+        #  L/K 는 항상(메뉴 열기/닫기). 숫자/방향/Z·X 는 메뉴 열렸을 때만(주행키와 충돌 방지).
+        pg = self.pygame
+        if hasattr(pg.key, "get_focused") and not pg.key.get_focused():
+            return
+        k = pg.key.get_pressed()
+        label = None
+        if k[pg.K_l]:
+            label = "like"
+        elif k[pg.K_k]:
+            label = "dislike"
+        elif menu_open:
+            if k[pg.K_1]:   label = "one"
+            elif k[pg.K_2]: label = "two"
+            elif k[pg.K_3]: label = "three"
+            elif k[pg.K_4]: label = "four"
+            elif k[pg.K_UP]:    label = "point_up"
+            elif k[pg.K_DOWN]:  label = "point_down"
+            elif k[pg.K_LEFT]:  label = "point_left"
+            elif k[pg.K_RIGHT]: label = "point_right"
+            elif k[pg.K_z]: label = "gun_left"
+            elif k[pg.K_x]: label = "gun_right"
+        if label:
+            self.pub_gesture_key.publish(String(data=label))
 
     def _poll_estop(self):
         # 스페이스바 누르는 동안 True 발행 → control_node 가 전 모드에서 즉시 정지.
