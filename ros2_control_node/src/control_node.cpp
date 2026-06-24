@@ -74,6 +74,9 @@ ControlNode::ControlNode()
   yaw_angle_sub_ = this->create_subscription<std_msgs::msg::Float32>(
     "/yaw_set_angle", 10,
     std::bind(&ControlNode::yawSetAngleCallback, this, _1));
+  compose_confirm_sub_ = this->create_subscription<std_msgs::msg::Empty>(
+    "/compose_confirm", 10,
+    std::bind(&ControlNode::composeConfirmCallback, this, _1));
   estop_sub_ = this->create_subscription<std_msgs::msg::Bool>(
     "/estop", 10, std::bind(&ControlNode::estopCallback, this, _1));
   adjust_sub_ = this->create_subscription<AdjustCmd>(
@@ -383,14 +386,29 @@ void ControlNode::yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr ms
   double off = wrapAngle(static_cast<double>(msg->data));
   adjust_.heading_offset = off;          // 몸체 헤딩 목표 = 주인방위 + off (구도 유지)
   yaw_warn_latched_ = false;
-  // 구도 기동 시작: 몸체가 |off| 만큼 도는 데 걸리는 시간(추정) + 정착 2s 동안 주행 보류.
-  double w = std::max(0.05, params_.w_body_max);
-  double rot_time = std::abs(off) / w * 1.3;     // PD 수렴 여유 30%
-  compose_until_ = this->now() + rclcpp::Duration::from_seconds(rot_time + 2.0);
+  // 구도 기동 시작: 주행 보류. 종료는 주인 따봉 확정(/compose_confirm). 단, 제스처가
+  //  영영 안 오면 멈춰있지 않도록 안전 타임아웃(넉넉히)도 둔다.
+  compose_until_ = this->now() + rclcpp::Duration::from_seconds(60.0);
   compose_active_ = true;
   RCLCPP_INFO(this->get_logger(),
-    "촬영구도: off=%.0f° → heading_offset 설정. 자전+OAK재정렬 약 %.1fs 후 주행재개 "
-    "(theta_head≈%.0f° 수렴)", off * 180.0 / M_PI, rot_time + 2.0, -off * 180.0 / M_PI);
+    "촬영구도: off=%.0f° → heading_offset 설정. 자전+OAK재정렬 후 따봉 확정 대기 "
+    "(theta_head≈%.0f° 수렴)", off * 180.0 / M_PI, -off * 180.0 / M_PI);
+}
+
+// 구도 확정(주인 따봉 1.5s): 자동 기동 종료 → 주행 재개. 이 순간 OAK는 주인을 화면
+//  중앙에 둔 상태이므로 theta_head 를 정확값(-heading_offset)으로 확정 반영한다.
+void ControlNode::composeConfirmCallback(const std_msgs::msg::Empty::SharedPtr)
+{
+  if (!compose_active_) return;
+  compose_active_ = false;
+  double exact = wrapAngle(-adjust_.heading_offset);
+  head_angle_ = exact;
+  if (params_.top_yaw_speed > 1e-6) {
+    yaw_time_accum_ = std::clamp(exact / params_.top_yaw_speed,
+                                 -params_.yaw_time_limit, params_.yaw_time_limit);
+  }
+  RCLCPP_INFO(this->get_logger(),
+    "촬영구도 확정: theta_head=%.0f° 고정 → 주행 재개", exact * 180.0 / M_PI);
 }
 
 // 손동작 조정 명령 라우팅 (AdjustCmd.msg 의 param 상수 참조).

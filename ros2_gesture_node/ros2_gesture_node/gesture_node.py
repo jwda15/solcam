@@ -110,6 +110,10 @@ class GestureNode(Node):
         self._rockon_start = None       # rock_on 연속 유지 시작시각
         self._rockon_last_seen = 0.0    # 마지막으로 rock_on 본 시각(드롭아웃 허용용)
         self._rockon_block_until = 0.0  # 이 시각까지는 재발동 차단
+        # 촬영구도 자동 기동(control_node /compose_active) 동안 따봉 1.5s 유지 = 확정.
+        self._compose_active = False    # control_node 가 기동중이라고 알린 상태
+        self._compose_like_start = None # 따봉 연속 유지 시작시각
+        self._compose_hold = 1.5        # 확정에 필요한 따봉 유지[s]
 
         rtype = str(gp("recognizer"))
         self.mock_mode = rtype == "mock"
@@ -143,6 +147,9 @@ class GestureNode(Node):
         # 각도확정(AngleSet): 자전 후 촬영카메라(몸체)가 OAK(주인) 기준 보는 방향[rad].
         #  control_node 가 heading_offset + theta_head(데드레코닝)를 이 값으로 덮어씀.
         self.pub_yaw_angle = self.create_publisher(Float32, "/yaw_set_angle", 10)
+        # 구도 확정: 자동 기동중 주인이 따봉 1.5s → control_node 가 기동 종료+각도 확정.
+        self.pub_compose_confirm = self.create_publisher(Empty, "/compose_confirm", 10)
+        self.create_subscription(Bool, "/compose_active", self._compose_active_cb, 10)
 
         # ----- 키보드 제스처 주입(ui_node /gesture_key) — 카메라 없이/대신 메뉴 조작 -----
         #  L=like K=dislike 1~4=one~four 방향키=point_* Z/X=gun. 카메라 인식보다 우선.
@@ -238,9 +245,28 @@ class GestureNode(Node):
                 (t - self._rockon_last_seen) > self._rockon_dropout:
             self._rockon_start = None   # 다른 동작/장시간 끊김 → 홀드 취소
 
+    def _compose_active_cb(self, msg):
+        self._compose_active = bool(msg.data)
+        if not self._compose_active:
+            self._compose_like_start = None
+
     def _step(self, raw_label, t):
         self._handle_rockon(raw_label, t)   # 메뉴와 무관하게 항상 먼저 처리
         label = self._to_menu_label(raw_label)
+        # 촬영구도 자동 기동중: 따봉(TRIGGER) 1.5s 유지 → 확정 발행. 그 동안 따봉은
+        #  메뉴를 열지 않도록 라벨을 소거(메뉴 오픈 트리거와 충돌 방지).
+        if self._compose_active:
+            if label == TRIGGER:
+                if self._compose_like_start is None:
+                    self._compose_like_start = t
+                elif (t - self._compose_like_start) >= self._compose_hold:
+                    self.pub_compose_confirm.publish(Empty())
+                    self.get_logger().info(
+                        "따봉 1.5s → 촬영구도 확정(/compose_confirm) → 주행 시작")
+                    self._compose_like_start = None
+                label = None
+            else:
+                self._compose_like_start = None
         # 도움말 오버레이 표시 중: 메뉴 입력 차단, 역따봉(뒤로)/따봉으로 닫기.
         if self.ui_flags.get("help"):
             if label in (BACK, TRIGGER):

@@ -243,7 +243,7 @@ class Hud:
                     self._border_fill_lr(scr, rect, prog, FILL, 255, 3)
                 col = WHITE if active else DIM
             if directional:
-                self._dir_card(scr, rect, it["gesture"], label, col)
+                self._dir_card(scr, rect, self._glyph_for(it["gesture"], items), label, col)
             else:
                 self._card_text(scr, rect, {"gesture": it["gesture"], "label": label}, col, col)
             if active and it["label"].startswith("Zoom"):
@@ -252,10 +252,16 @@ class Hud:
             self._gauge(scr, w // 2, y0 - 16, prog)
         self._hint(scr, w, h, "reverse thumbs-up to go back")
 
-    def _dir_card(self, scr, rect, gesture, label, col):
-        # 글리프(방향) 우선, 없으면 손가락 개수 숫자(1~4). 둘 다 없을 때만 '?'.
-        #  Wheel/More 처럼 방향(p_*)+숫자(one~four)가 섞인 메뉴에서 숫자가 ?로 뜨던 버그 수정.
-        sym = GSYM.get(gesture) or GESTURE_NUM.get(gesture, "?")
+    def _glyph_for(self, gesture, items):
+        # 손가락 개수 카드(one~four)는 숫자로. 단 'two'는 카테고리 진입(V)일 수 있어,
+        #  같은 메뉴에 one/three/four 가 있으면(=개수 선택 메뉴) 'two'도 '2'로 표기.
+        #  Wheel/More 처럼 방향(p_*)+숫자(one~four) 섞인 메뉴에서 숫자가 ?/V 로 뜨던 버그 수정.
+        has_count = any(it["gesture"] in ("one", "three", "four") for it in items)
+        if gesture in GESTURE_NUM and (has_count or gesture != "two"):
+            return GESTURE_NUM[gesture]
+        return GSYM.get(gesture, "?")
+
+    def _dir_card(self, scr, rect, sym, label, col):
         g = self.f_sym.render(sym, True, col)
         scr.blit(g, (rect.x + (rect.w - g.get_width()) // 2, rect.y + 8))
         s = self.f_small.render(label, True, col)

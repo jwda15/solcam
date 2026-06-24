@@ -195,6 +195,11 @@ class Preview:
 
         self.held = None
         self.help = False
+        # 촬영구도 자동 기동(프리셋 선택 후): 몸체 자전+OAK재정렬 동안 하단 굵은 파란선.
+        #  실제 로봇은 control_node /compose_active 가 구동 — 여기선 동작 시뮬레이션.
+        #  종료 = 주인이 따봉(L) 1.5s 유지(구도 OK 확인) → 파란선 사라지고 주행 시작.
+        self._compose_active = False
+        self._compose_like_start = None
         self._rel_job = None
         self._cards = {}                 # gesture -> (x,y,w,h)  (직전 프레임)
         self._prev_prog = 0.0
@@ -247,8 +252,23 @@ class Preview:
         if self.help:
             if self.held in ("dislike", "like"):    # 역따봉/따봉 → 도움말 닫기
                 self.help = False
+        elif self._compose_active:
+            # 구도 자동 기동중: 주인이 따봉(L) 1.5s 유지하면 확정 → 주행 시작(메뉴 안 열림).
+            if self.held == "like":
+                if self._compose_like_start is None:
+                    self._compose_like_start = t
+                elif t - self._compose_like_start >= 1.5:
+                    self._compose_active = False
+                    self._compose_like_start = None
+            else:
+                self._compose_like_start = None
+            self.sm.update(None, t)             # 입력 무시(메뉴 안 열림), 타이머만 진행
         else:
             for ev in self.sm.update(self.held, t):
+                if ev.kind == "action" and ev.action and ev.action.kind == "yaw":
+                    # 촬영구도 프리셋(Front/Right/Back/Left) 선택 → 자동 기동 시작
+                    self._compose_active = True
+                    self._compose_like_start = None
                 if ev.kind == "action" and ev.action and ev.action.kind == "mode":
                     self.mode = ev.action.payload.get("mode", self.mode)
                 elif (ev.kind == "action" and ev.action and ev.action.kind == "phone"
@@ -329,6 +349,8 @@ class Preview:
         # 상단바 숨김(작은 LCD 깔끔하게)
         if snap.get("state") == "MENU":
             self._dock(snap)
+        elif self._compose_active:
+            self._draw_compose_bar()
         else:
             c.create_text(W//2, H-58, text="show LIKE to open menu  (press L)",
                           fill=DIM, font=("Segoe UI", 12))
@@ -457,7 +479,7 @@ class Preview:
             if label == "Rec":
                 label = "Rec OFF" if self.recording else "Rec ON"
             if directional:
-                glyph = GSYM.get(it["gesture"], "?")
+                glyph = self._glyph_for(it["gesture"], items)
                 c.create_text(x+cw//2, y+26, text=glyph, fill=txtcol,
                               font=("Segoe UI", 30, "bold"))
                 c.create_text(x+cw//2, y+ch-15, text=label, fill=txtcol,
@@ -472,6 +494,26 @@ class Preview:
         hint = ("↑↓←→ point  ·  Z/X spin  ·  2 reset  ·  K back" if directional
                 else "hold 1~4 to select  ·  K back")
         c.create_text(W//2, H-8, text=hint, fill=DIM, font=("Segoe UI", 10))
+
+    def _glyph_for(self, gesture, items):
+        # 손가락 개수 카드(one~four)는 숫자로. 단 'two'는 카테고리 진입(V)일 수 있어,
+        #  같은 메뉴에 one/three/four 가 있으면(=개수 선택 메뉴) 'two'도 '2'로 표기.
+        has_count = any(it["gesture"] in ("one", "three", "four") for it in items)
+        if gesture in GNUM and (has_count or gesture != "two"):
+            return GNUM[gesture]
+        return GSYM.get(gesture, "?")
+
+    def _draw_compose_bar(self):
+        c = self.cv
+        # 하단 굵은 파란 막대 = 촬영구도 자동 기동중(주행 보류).
+        c.create_rectangle(0, H-10, W, H, fill=ACCENT, outline="")
+        frac = 0.0
+        if self._compose_like_start is not None:
+            frac = min(1.0, (time.time() - self.t0 - self._compose_like_start) / 1.5)
+        c.create_text(W//2, H-30, fill=WHITE, font=("Segoe UI", 12, "bold"),
+                      text="adjusting OAK...  hold THUMBS-UP (L) 1.5s to confirm & drive")
+        if frac > 0:
+            self._gauge(W//2, H-50, frac)
 
     def _border_lr(self, x, y, w, h, frac):
         c = self.cv
