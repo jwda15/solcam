@@ -55,6 +55,13 @@ YAW_PERIOD_FAR   = 1.0
 AZ_DEAD_NEAR     = 0.35
 AZ_DEAD_FAR      = 0.18
 
+# ---- 몸체 제어 의도(3번째 창) — control_params.yaml 과 일치 ----
+KP_POS = 0.5; V_MAX = 0.12; POS_DEAD = 0.30
+KP_ORBIT_R = 0.5; ORBIT_SPEED = 0.10
+KP_LEASH = 0.6; LEASH_DEAD = 0.7
+SEG_D_DEFAULT = 1.5
+ARROW_PX_PER_MPS = 800.0   # 속도 화살표 길이 환산(px per m/s)
+
 # ---- tracking_node.cpp 와 동일한 평활/외삽 파라미터 (/owner_pose 재현용) ----
 MAX_SPEED_MMPS = 2000.0   # ±2.0 m/s 속도 클립
 EMA_AXY        = 0.6      # x EMA (tracking_params.yaml=0.6 와 일치)
@@ -155,6 +162,95 @@ class OwnerTracker:
 
     def lost_secs(self, now):
         return 0.0 if self.lost_since is None else (now - self.lost_since)
+
+
+class ControlIntentSim:
+    """모드별 '몸체가 가려는 속도'를 body/map 프레임에서 계산(의도 시각화).
+    control 로직 단순 재현 — odom 없는 벤치라 실제 주행이 아닌 '방향·속도 의도'."""
+    NAMES = {1: "FOLLOW", 2: "ROTATE", 3: "FOLLOW2", 4: "ORBIT"}
+
+    def __init__(self):
+        self.mode = 1
+        self.D = SEG_D_DEFAULT
+        self.engaged = False
+
+    def set_mode(self, m, dist):
+        self.mode = m
+        self.D = dist if dist > 0.1 else SEG_D_DEFAULT   # 진입 시 현재 거리 캡처
+        self.engaged = True
+
+    def compute(self, ox, oz):
+        # map 프레임: x=ox(우측+), up=oz(전방+). 반환 (vx, vup, tx, ty, note)
+        dist = math.hypot(ox, oz)
+        if dist < 1e-3:
+            return (0.0, 0.0, 0.0, 0.0, "no owner")
+        ux, uz = ox / dist, oz / dist
+        if self.mode == 2:                       # ROTATE: 병진 없음(제자리 회전)
+            return (0.0, 0.0, ox, oz, "rotate in place (vx=vy=0)")
+        if self.mode == 4:                       # ORBIT: 반지름 P + 접선(CCW)
+            v_rad = KP_ORBIT_R * (dist - self.D)
+            vx = v_rad * ux + ORBIT_SPEED * (-uz)
+            vup = v_rad * uz + ORBIT_SPEED * (ux)
+            tx, ty = ox, oz
+        elif self.mode == 3:                     # FOLLOW2: 거리만, 접근만(후퇴X)
+            over = dist - (self.D + LEASH_DEAD)
+            sp = min(KP_LEASH * over, V_MAX) if over > 0 else 0.0
+            vx, vup = sp * ux, sp * uz
+            tx, ty = self.D * ux, self.D * uz
+        else:                                    # FOLLOW: 거리 D 유지(접근/후퇴)
+            err = dist - self.D
+            sp = 0.0 if abs(err) <= POS_DEAD else _clip(KP_POS * err, -V_MAX, V_MAX)
+            vx, vup = sp * ux, sp * uz
+            tx, ty = self.D * ux, self.D * uz
+        sp = math.hypot(vx, vup)                 # 벡터크기 v_max 클램프
+        if sp > V_MAX:
+            vx *= V_MAX / sp
+            vup *= V_MAX / sp
+        return (vx, vup, tx, ty, "")
+
+
+def draw_intent(trk, intent, size=460, max_range=4.0):
+    m = np.full((size, size + 60, 3), 22, dtype=np.uint8)
+    cx, cy = (size + 60) // 2, size - 40
+    ppm = (size - 70) / max_range
+    for r in range(1, int(max_range) + 1):
+        cv2.circle(m, (cx, cy), int(r * ppm), (55, 55, 55), 1)
+    cv2.drawMarker(m, (cx, cy), (0, 220, 0), cv2.MARKER_TRIANGLE_UP, 16, 2)  # 로봇
+
+    name = intent.NAMES.get(intent.mode, "?")
+    if trk.alive:
+        ox, oz = trk.sx / 1000.0, trk.sz / 1000.0
+        vx, vup, tx, ty, note = intent.compute(ox, oz)
+        # 주인(빨강), 목표점(초록 X)
+        cv2.circle(m, (cx + int(ox*ppm), cy - int(oz*ppm)), 6, (0, 0, 255), -1)
+        if intent.mode in (1, 3, 4):
+            cv2.drawMarker(m, (cx + int(tx*ppm), cy - int(ty*ppm)),
+                           (0, 220, 0), cv2.MARKER_TILTED_CROSS, 14, 2)
+        # 속도 화살표(시안) + 예측 경로(점선)
+        spd = math.hypot(vx, vup)
+        if spd > 1e-3:
+            ex = cx + int(vx * ARROW_PX_PER_MPS)
+            ey = cy - int(vup * ARROW_PX_PER_MPS)
+            cv2.arrowedLine(m, (cx, cy), (ex, ey), (255, 255, 0), 2, tipLength=0.25)
+            for t in (0.5, 1.0, 1.5):            # 이 속도 유지 시 향하는 지점(점)
+                cv2.circle(m, (cx + int(vx*t*ppm), cy - int(vup*t*ppm)),
+                           2, (180, 180, 0), -1)
+        lines = [
+            f"INTENT [{name}]  D={intent.D:.2f}m",
+            f"v_fwd={vup:+.2f} v_lat={vx:+.2f}  |v|={spd:.2f} m/s",
+            note if note else f"dist={math.hypot(ox,oz):.2f}m",
+        ]
+        col = (255, 255, 0)
+    else:
+        lines = [f"INTENT [{name}]", "no owner -> stop"]
+        col = (0, 0, 255)
+    y = 22
+    for ln in lines:
+        cv2.putText(m, ln, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+        y += 22
+    cv2.putText(m, "[1]FOLLOW [2]ROTATE [3]FOLLOW2 [4]ORBIT", (10, size - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (130, 130, 130), 1)
+    return m
 
 
 def build_pipeline():
@@ -356,6 +452,7 @@ def main():
     persons, owner_det = [], None
     trk = OwnerTracker()
     yaw = YawPulseSim()
+    intent = ControlIntentSim()
     try:
         while pipe.isRunning():
             in_rgb = q_rgb.tryGet()
@@ -392,11 +489,14 @@ def main():
 
             cv2.imshow("OAK Tracking", draw_tracking(frame, persons, owner_det, trk, yaw, now))
             cv2.imshow("2D Map", draw_map(owner_det, trk, now))
+            cv2.imshow("Robot Intent", draw_intent(trk, intent))
             k = cv2.waitKey(1) & 0xFF
             if k in (ord('q'), 27):
                 break
             if k == ord('r'):                  # rock_on 0점 지정 시뮬
                 yaw.reset()
+            elif k in (ord('1'), ord('2'), ord('3'), ord('4')):   # 모드 전환(현 거리 캡처)
+                intent.set_mode(k - ord('0'), dist)
     finally:
         try:
             pipe.stop()
