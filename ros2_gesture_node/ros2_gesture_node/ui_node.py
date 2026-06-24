@@ -137,6 +137,7 @@ class UiNode(Node):
             pygame.mouse.set_visible(False)
             self.hud = Hud(pygame)
             self.kfont = pygame.font.Font(None, 26)   # 모드선택 오버레이용(ASCII)
+            self.recfont = pygame.font.Font(None, 24)  # 우상단 REC 표시(작게)
             self._closing = False
             self.render_timer = self.create_timer(1.0 / 30.0, self._render)
             self.get_logger().info("LCD UI 시작 (pygame)")
@@ -346,6 +347,7 @@ class UiNode(Node):
                       recording=self.recording, rec_start=self.rec_start,
                       frame=main, oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
         self._draw_mode_label()          # ★좌상단 현재 모드 (폰/OAK 영상 공통)
+        self._draw_rec_indicator()       # ★우상단 REC(녹화 중일 때만, 빨간 글씨)
         if self.mode_select:
             self._draw_mode_overlay()
         # (키보드 안내/상태 오버레이는 거추장스러워 제거 — 키 입력은 그대로 동작)
@@ -361,6 +363,23 @@ class UiNode(Node):
             self.view = "split"
         else:  # split
             self.view = "oak" if self._pre_split == "phone" else "phone"
+
+    def _draw_rec_indicator(self):
+        # 녹화 중일 때만 우상단에 작은 빨간 'REC mm:ss' + 점. (영상 위 가독성 위해 외곽선)
+        if not self.recording:
+            return
+        pg = self.pygame
+        w, _h = self.screen.get_size()
+        secs = int(time.time() - self.rec_start) if self.rec_start else 0
+        txt = "REC %d:%02d" % (secs // 60, secs % 60)
+        red = (255, 70, 70)
+        s_blk = self.recfont.render(txt, True, (0, 0, 0))
+        s_red = self.recfont.render(txt, True, red)
+        x = w - s_red.get_width() - 12
+        y = 9
+        self.screen.blit(s_blk, (x + 1, y + 1))   # 검은 외곽선(가독성)
+        self.screen.blit(s_red, (x, y))
+        pg.draw.circle(self.screen, red, (x - 9, y + s_red.get_height() // 2), 4)
 
     def _draw_mode_label(self):
         name = MODE_NAMES.get(self.mode, str(self.mode))

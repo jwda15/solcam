@@ -71,16 +71,38 @@ stop() {
 }
 
 # Output/*.mp4 전부 폰으로 전송(타임스탬프 파일명이라 재전송해도 덮어쓰기=중복없음).
+#  ★제스처 종료는 'bash sh stop' 을 분리(start_new_session) 실행해 콘솔 로그가 안 보이므로,
+#   진단용으로 $LOG/push.log 에도 전부 남긴다. (USB adb 미연결이면 보존만 하고 건너뜀)
 push_videos() {
   local out="$REPO/Output" dcim="${SOLCAM_PHONE_DCIM:-/sdcard/DCIM/solcam}"
-  ls "$out"/*.mp4 >/dev/null 2>&1 || { echo "[stop] 전송할 영상 없음($out)"; return; }
-  "$ADB_BIN" get-state >/dev/null 2>&1 || { echo "[stop] adb 미연결 → 영상 전송 건너뜀(영상은 $out 에 보존)"; return; }
-  echo "[stop] Output 영상 폰 전송(adb → $dcim)..."
-  "$ADB_BIN" shell mkdir -p "$dcim" >/dev/null 2>&1 || true
+  local plog="$LOG/push.log"
+  mkdir -p "$LOG" 2>/dev/null || true
+  {
+    echo "=== push_videos $(date '+%F %T') ==="
+    echo "out=$out  dcim=$dcim  ADB_BIN=$ADB_BIN"
+    echo "-- adb devices --"; "$ADB_BIN" devices 2>&1 | sed '1d'
+  } >>"$plog" 2>&1
+  if ! ls "$out"/*.mp4 >/dev/null 2>&1; then
+    echo "[stop] 전송할 영상 없음($out)"; echo "no mp4 in $out" >>"$plog"; return
+  fi
+  if ! "$ADB_BIN" get-state >/dev/null 2>&1; then
+    echo "[stop] adb 미연결 → 영상 전송 건너뜀(영상은 $out 보존). 진단: $plog"
+    echo "adb get-state FAIL (USB 미연결/디버깅 미허용)" >>"$plog"; return
+  fi
+  echo "[stop] Output 영상 폰 전송(adb → $dcim) ... 진단: $plog"
+  "$ADB_BIN" shell mkdir -p "$dcim" >>"$plog" 2>&1 || true
+  local n=0
   for f in "$out"/*.mp4; do
-    if "$ADB_BIN" push "$f" "$dcim/" >/dev/null 2>&1; then echo "   ✓ $(basename "$f")"
-    else echo "   ✗ $(basename "$f") (전송 실패)"; fi
+    if "$ADB_BIN" push "$f" "$dcim/" >>"$plog" 2>&1; then
+      echo "   ✓ $(basename "$f")"; n=$((n+1))
+      # 갤러리/IP Webcam 에 바로 보이도록 미디어 스캔(인덱싱). 실패해도 파일은 들어가 있음.
+      "$ADB_BIN" shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
+        -d "file://$dcim/$(basename "$f")" >>"$plog" 2>&1 || true
+    else
+      echo "   ✗ $(basename "$f") (전송 실패 — $plog 확인)"
+    fi
   done
+  echo "[stop] 폰 전송 $n 개 완료 → $dcim"; echo "pushed $n files to $dcim" >>"$plog"
 }
 
 clean() {

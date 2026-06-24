@@ -356,7 +356,20 @@ class Preview:
                           fill=DIM, font=("Segoe UI", 12))
             if snap.get("hold_gesture") == "like":
                 self._gauge(W//2, H-40, snap.get("hold_progress", 0.0))
+        self._draw_rec_indicator()
         self._draw_flash()
+
+    def _draw_rec_indicator(self):
+        # 녹화 중일 때만 우상단에 작은 빨간 'REC mm:ss' + 점.
+        if not self.recording:
+            return
+        c = self.cv
+        secs = int(time.time() - self.rec_start) if self.rec_start else 0
+        txt = f"REC {secs//60}:{secs%60:02d}"
+        c.create_text(W-14, 16, text=txt, anchor="e", fill=REC_RED,
+                      font=("Segoe UI", 12, "bold"))
+        c.create_oval(W-14-7*len(txt)-12, 12, W-14-7*len(txt)-4, 20,
+                      fill=REC_RED, outline="")
 
     def _detect_confirm(self, snap):
         prog = snap.get("hold_progress", 0.0)
