@@ -281,6 +281,10 @@ class GestureNode(Node):
 
     def _run_system(self, cmd):
         """전원/종료 실제 실행. (메뉴 Other>More 안쪽이라 오발동 위험 낮음)"""
+        # ★끄기 직전 모드를 IDLE(0)로 → control_node 가 즉시 정지(publishStop).
+        #  안 그러면 메뉴 닫히며 직전 모드(FOLLOW 등)가 재개돼 노드 죽기 전 ~1초 모터가 돈다.
+        if cmd in ("shutdown", "quit"):
+            self.pub_mode.publish(Int32(data=0))
         try:
             if cmd == "shutdown":
                 self.get_logger().warn("로봇 전원 OFF → poweroff")
