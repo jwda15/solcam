@@ -60,8 +60,8 @@ public:
         this->declare_parameter("max_speed_xy_mps",   2.0);  // 좌우 최대 속도 (m/s)
         this->declare_parameter("max_speed_z_mps",    2.0);  // 전후 최대 속도 (m/s)
         // ↑ 걷는 사람 ~1.5 m/s. 여유 두고 2.0. 이 이상의 추정 속도면 outlier.
-        this->declare_parameter("ema_alpha_xy",           0.35); // x,y EMA 계수
-        this->declare_parameter("ema_alpha_z",            0.15); // z EMA 계수 (정적 폴백용. 동적 사용 시 min/max가 우선)
+        this->declare_parameter("ema_alpha_xy",           0.6);  // x,y EMA 계수 (yaml=0.6)
+        this->declare_parameter("ema_alpha_z",            0.25); // z EMA 계수 (정적 폴백용. 동적 사용 시 min/max가 우선)
 
         // [0525] 동적 z 평활: 사람이 화면에서 좌우로 빠르게 움직일 때(bbox 중심 픽셀 x가
         //   많이 변할 때) z의 EMA 계수를 낮춰 강하게 평활하고, 정지 시엔 높여 빠르게 반응.
@@ -69,9 +69,9 @@ public:
         //   alpha_z = max - (min~max를 dpx/full 비율로 보간). dpx=프레임간 |Δ픽셀x|.
         //   ★픽셀 x를 신호로 쓰는 이유: azimuth/sx는 z 오염에 영향받아 순환 발생. 픽셀 x는 z 무관.
         this->declare_parameter("dyn_z_smooth",     true);  // 동적 z 평활 on/off
-        this->declare_parameter("ema_alpha_z_min",  0.08);  // 빠른 좌우이동 시 (강한 평활). 0이면 동결이라 하한 둠.
-        this->declare_parameter("ema_alpha_z_max",  0.40);  // 정지 시 (빠른 반응). 기존 z 반응속도.
-        this->declare_parameter("dyn_z_px_full",    15.0);  // 프레임간 픽셀x 이동이 이 값 이상이면 평활 최대(min).
+        this->declare_parameter("ema_alpha_z_min",  0.05);  // [0623] 0.08->0.05: 더 강한 평활.
+        this->declare_parameter("ema_alpha_z_max",  0.25);  // [0623] 0.40->0.25: 전후이동/정지 depth 튐↓.
+        this->declare_parameter("dyn_z_px_full",    10.0);  // [0623] 15->10: 작은 움직임에도 강평활 진입.
 
         // [0524] 메트릭 요약 로그 주기(프레임). 0이면 요약 로그 끕.
         this->declare_parameter("metric_log_period",  150);
