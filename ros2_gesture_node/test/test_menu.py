@@ -132,22 +132,21 @@ def test_wheel_jog_repeats_and_stops():
     assert sm.snapshot()["hold_progress"] == 0.0
 
 
-# ---------- 휠 > More: 이전 odom 기반 명령 (V 자리) ----------
-def test_wheel_more_old_commands():
+# ---------- 휠 > More: 공전 jog(검지) + 촬영구도 프리셋(손가락 개수) ----------
+def test_wheel_more_orbit_jog():
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)   # Wheel
     t = nav(sm, "two", t)                                      # More (V 자리)
     assert sm.path[-1].label == "More"
     a = [e for e in feed(sm, "p_left", t, 1.6)[0] if e.kind == "action"][0].action
     assert a.payload["param"] == "ORBIT_JOG" and a.payload["value"] > 0   # 공전 CCW(+)
-    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t); t = nav(sm, "two", t)
-    a = [e for e in feed(sm, "p_up", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["param"] == "RADIAL_JOG" and a.payload["value"] < 0  # Farther(멀어짐,−)
 
 
-def test_wheel_more_face_owner_reset():
-    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t); t = nav(sm, "two", t)
-    a = [e for e in feed(sm, "two", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload == {"param": "HEADING_OFFSET", "value": 0.0, "delta": False}
+def test_wheel_more_compose_presets():
+    # one=Front(0) two=Right(90) three=Back(180) four=Left(270) → yaw 액션(/yaw_set_angle)
+    for key, deg in [("one", 0), ("two", 90), ("three", 180), ("four", 270)]:
+        sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t); t = nav(sm, "two", t)
+        a = [e for e in feed(sm, key, t, 1.6)[0] if e.kind == "action"][0].action
+        assert a.kind == "yaw" and a.payload["deg"] == deg
 
 
 # ---------- 리프트: 방향(권총) ----------

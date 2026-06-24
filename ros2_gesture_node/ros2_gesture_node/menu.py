@@ -92,7 +92,7 @@ def build_menu(p: dict) -> MenuNode:
         return MenuNode(name, action=Action(
             "adjust", name, {"param": param, "value": value, "delta": delta}, stay=stay))
 
-    return MenuNode("Main", children={
+    root = MenuNode("Main", children={
         # ── ① 주행 모드 (손가락 개수) ──────────────────────────────
         "one": MenuNode("Mode", children={
             # ★Follow2 를 앞으로(자주 씀, odom 불필요). 순서: Idle/Follow2/Follow1/More
@@ -117,14 +117,18 @@ def build_menu(p: dict) -> MenuNode:
             "gun_right": adj("Spin CCW", "BODY_WZ", +ja, delta=False),  # 우 = 반시계 자전
             # V(two) → More: ★주인기준 모션 jog(공전/거리) — 모든 모드에서 동작.
             #   목표값 조정이 아니라 "도는/다가가는 운동" 자체. 손 떼면 정지, 메뉴 나가면 재engage.
+            # ── More: 촬영 구도 프리셋(손가락 개수) + 공전 jog(검지) ──
+            #   ★Front/Right/Back/Left = 촬영카메라(몸체)가 OAK(주인) 기준 볼 방향.
+            #     고르면 몸체가 그만큼 자전하고, OAK는 반대로 돌아 주인을 다시 화면중앙에
+            #     맞춘다(개루프 킥 → OAK 영상으로 자가 보정). 정확한 몸체-OAK 각이 확정됨.
+            #   ★Pan(쓰리건)·Farther/Closer(주인기준 전후진) 제거 — Front=정면구도로 대체.
             "two": MenuNode("More", children={
-                "p_left":  adj("Orbit CCW", "ORBIT_JOG",  +jo, delta=False),  # 주인 둘레 반시계
-                "p_right": adj("Orbit CW",  "ORBIT_JOG",  -jo, delta=False),  # 시계
-                "p_up":    adj("Farther",   "RADIAL_JOG", -jr, delta=False),  # 멀어짐(− 접근)
-                "p_down":  adj("Closer",    "RADIAL_JOG", +jr, delta=False),  # 접근(+)
-                # ★Pan(쓰리건) 제거 — 바깥 Wheel 자전(Spin)과 중복. 촬영구도(몸체-OAK 각)는
-                #   자전 후 나갈 때 뜨는 Front/Right/Back/Left 선택으로 정확히 확정한다.
-                "two": adj("Face Owner", "HEADING_OFFSET", 0.0, delta=False, stay=False),
+                "one":   MenuNode("Front", action=Action("yaw", "Front", {"deg": 0})),
+                "two":   MenuNode("Right", action=Action("yaw", "Right", {"deg": 90})),
+                "three": MenuNode("Back",  action=Action("yaw", "Back",  {"deg": 180})),
+                "four":  MenuNode("Left",  action=Action("yaw", "Left",  {"deg": 270})),
+                "p_left":  adj("Orbit CCW", "ORBIT_JOG", +jo, delta=False),  # 주인 둘레 반시계
+                "p_right": adj("Orbit CW",  "ORBIT_JOG", -jo, delta=False),  # 시계
             }),
         }),
         # ── ③ 리프트 — 검지 상/하 ────────────────────────────────
@@ -161,6 +165,7 @@ def build_menu(p: dict) -> MenuNode:
             }),
         }),
     })
+    return root
 
 
 class MenuStateMachine:

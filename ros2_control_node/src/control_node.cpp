@@ -69,6 +69,9 @@ ControlNode::ControlNode()
   yaw_zero_sub_ = this->create_subscription<std_msgs::msg::Empty>(
     "/yaw_set_zero", 10,
     std::bind(&ControlNode::yawSetZeroCallback, this, _1));
+  yaw_angle_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+    "/yaw_set_angle", 10,
+    std::bind(&ControlNode::yawSetAngleCallback, this, _1));
   estop_sub_ = this->create_subscription<std_msgs::msg::Bool>(
     "/estop", 10, std::bind(&ControlNode::estopCallback, this, _1));
   adjust_sub_ = this->create_subscription<AdjustCmd>(
@@ -366,6 +369,23 @@ void ControlNode::yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr)
     "OAK 0점 지정: 누적명령시간=0, %.1fs 정지", node_params_.yaw_zero_cooldown);
 }
 
+// 촬영구도 프리셋(Front/Right/Back/Left): 촬영카메라(몸체)가 OAK(주인) 기준 볼 방향 off[rad].
+//  하는 일 = heading_offset 만 세팅. 그러면:
+//   ① 몸체가 주인방위+off 로 자전(face_owner) → 주인이 OAK 화면에서 벗어남.
+//   ② composition=true 가 되어 OAK(상단yaw)가 방위각 폐루프로 주인을 화면중앙에 재정렬.
+//   ③ 수렴(azimuth≈0)하면 applyTopYawGuard 가 theta_head 를 정확값 -off 로 고정.
+//  → 개루프 정밀도가 떨어져도 OAK 영상으로 스스로 보정되고, 확정된 몸체-OAK 각이 제어에 쓰임.
+//  Front=0, Right=+90°, Back=180°, Left=270°(=-90°). 시연 중 좌우 바뀌면 menu.py deg 만 교체.
+void ControlNode::yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr msg)
+{
+  double off = wrapAngle(static_cast<double>(msg->data));
+  adjust_.heading_offset = off;          // 몸체 헤딩 목표 = 주인방위 + off (구도 유지)
+  yaw_warn_latched_ = false;
+  RCLCPP_INFO(this->get_logger(),
+    "촬영구도: off=%.0f° → heading_offset 설정. OAK가 주인 재정렬→theta_head≈%.0f° 수렴",
+    off * 180.0 / M_PI, -off * 180.0 / M_PI);
+}
+
 // 손동작 조정 명령 라우팅 (AdjustCmd.msg 의 param 상수 참조).
 //  새 손동작 기능 추가 시: msg 에 상수 추가 + 여기 case 한 줄 (확장 지점).
 void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
@@ -590,7 +610,7 @@ void ControlNode::controlStep()
 
   // 5.5) 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운 (상단yaw 명령 후처리).
   //   각도가 아닌 명령시간으로 제어하므로 현재각을 여기서 적분·판정한다.
-  applyTopYawGuard(cmd, dt, in.owner.distance);
+  applyTopYawGuard(cmd, dt, in.owner.distance, in.owner.azimuth, in.owner.is_detected);
 
   // 6) 장애물 회피: 몸체 속도만 깎음(목표는 불변 → 회피 후 자연 복귀)
   if (obstacle_params_.enabled) {
@@ -717,7 +737,8 @@ void ControlNode::publishDebug(const ControlCommand & cmd, const ControlInput & 
 //  연속이 아니라 yaw_pulse_period 마다 yaw_pulse_sec 동안만 톡 보낸다(모터가 거칠어서).
 //  보낸 "명령 시간"을 방향별로 누적(yaw_time_accum_)해 ±yaw_time_limit 넘으면 차단(케이블).
 //  head_angle_ = 누적시간×속도 로 스테이지각을 추정(StateEstimator 용).
-void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner_dist)
+void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner_dist,
+                                   double owner_az, bool owner_detected)
 {
   rclcpp::Time now = this->now();
 
@@ -794,6 +815,19 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
   }
 
   head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 추정용 스테이지각
+
+  // ★촬영구도 수렴 보정: 구도(heading_offset)를 잡은 상태에서 주인이 OAK 중앙
+  //  (azimuth≈0)에 재정렬되면, 펄스 데드레코닝 오차를 버리고 theta_head 를 정확값
+  //  -heading_offset 으로 고정한다. = "영상으로 알아낸 몸체-OAK 각"을 제어에 확정 반영.
+  if (composition && owner_detected &&
+      std::abs(owner_az) < params_.azDeadFor(owner_dist)) {
+    double exact = wrapAngle(-adjust_.heading_offset);
+    head_angle_ = exact;
+    if (params_.top_yaw_speed > 1e-6) {
+      yaw_time_accum_ = std::clamp(exact / params_.top_yaw_speed,
+                                   -params_.yaw_time_limit, params_.yaw_time_limit);
+    }
+  }
 }
 
 // 현재 모드가 유지하려는 목표 거리[m] (UI/디버그 표시용).
