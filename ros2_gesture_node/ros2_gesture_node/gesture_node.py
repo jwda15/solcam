@@ -67,7 +67,7 @@ class GestureNode(Node):
         self.declare_parameter("heading_step_deg", 15.0)    # deg, 자전/헤딩 1스텝
         self.declare_parameter("lift_step", 0.1)            # m, +올림
         self.declare_parameter("jog_lin", 0.12)             # m/s, 휠 jog 전후/좌우
-        self.declare_parameter("jog_ang", 0.6)              # rad/s, 휠 jog 자전
+        self.declare_parameter("jog_ang", 0.3)              # rad/s, 휠 jog 자전 [0623 0.6→0.3: OAK가 주인 따라오게]
         self.declare_parameter("radial_jog", 0.12)          # m/s, 주인기준 거리 jog(접근/멀어짐)
         self.declare_parameter("orbit_jog", 0.12)           # m/s, 주인기준 공전(접선) jog
         # 부호(실차에서 방향 반대면 여기만 뒤집기). +1 기준:

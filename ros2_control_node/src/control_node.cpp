@@ -729,6 +729,21 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
     return;
   }
 
+  // ★주행 중엔 상단yaw 고정 — 펄스로 흔들리면 theta_head 가 출렁여 몸체 추정/제어가
+  //  오염됨. 평상시엔 몸체가 주인을 향하므로(face_owner) OAK 화면에 주인이 유지된다.
+  //  OAK 독립 추적은 "Wheel 명령 신선" 또는 "헤딩오프셋(Pan) 구도" 일 때만:
+  //   몸체는 풍경을 향하고 OAK 만 주인을 따라가는 연출.
+  bool wheel_fresh =
+      (now - last_jog_time_).seconds() < node_params_.wheel_cmd_timeout ||
+      (now - last_wheel_cmd_time_).seconds() < node_params_.wheel_cmd_timeout;
+  bool composition = std::abs(adjust_.heading_offset) > 0.05;
+  if (!wheel_fresh && !composition) {
+    cmd.top_yaw_target = 0.0;   // 고정(정지)
+    cmd.top_yaw_active = false;
+    head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 누적 유지
+    return;
+  }
+
   // trackTopYaw 결과 = 원하는 회전 방향(+1/-1/0). top_yaw_sign 은 이미 반영됨.
   int want = (cmd.top_yaw_target > 1e-6) ? 1 : (cmd.top_yaw_target < -1e-6 ? -1 : 0);
 
