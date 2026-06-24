@@ -45,8 +45,8 @@ TOP_YAW_SIGN = 1.0      # 회전 방향이 실제와 반대면 -1.0
 # ---- tracking_node.cpp 와 동일한 평활/외삽 파라미터 (/owner_pose 재현용) ----
 MAX_SPEED_MMPS = 2000.0   # ±2.0 m/s 속도 클립
 EMA_AXY        = 0.6      # x EMA (tracking_params.yaml=0.6 와 일치)
-EMA_AZ_MIN     = 0.05     # z EMA(빠른 좌우이동, 강한 평활) [0623 0.08->0.05]
-EMA_AZ_MAX     = 0.25     # z EMA(전후이동/정지) [0623 0.40->0.25: depth 튐↓]
+EMA_AZ_MIN     = 0.03     # z EMA(빠른 좌우이동, 강한 평활) [0623 ->0.03]
+EMA_AZ_MAX     = 0.15     # z EMA(전후이동/정지) [0623 ->0.15: depth 튐↓↓]
 DYN_Z_PX_FULL  = 10.0     # 프레임간 픽셀x 이동 이 값↑이면 z 평활 최대 [0623 15->10]
 VEL_EMA        = 0.5      # 외삽용 속도 추정 EMA
 LOST_HOLD_S    = 2.0      # 가림/이탈 시 외삽 유지 시간 (track_buffer 60f@30fps ≈ 2s)
