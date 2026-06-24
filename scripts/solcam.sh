@@ -20,8 +20,10 @@ VIDEO_NR="${SOLCAM_VIDEO_NR:-2}"
 VIDEO_DEV="/dev/video${VIDEO_NR}"
 CAM_SIZE="${SOLCAM_CAM_SIZE:-1280x720}"
 # 폰 영상: IP Webcam 앱. 기본=USB(adb forward)로 localhost 터널 → 지연 낮고 WiFi 불필요.
-#  WiFi 로 쓰려면: export SOLCAM_PHONE_URL=http://<폰IP>:8080/video  (빈값=scrcpy 방식)
-SOLCAM_PHONE_URL="${SOLCAM_PHONE_URL-http://localhost:8080/video}"
+#  WiFi 로:  export SOLCAM_PHONE_URL=http://<폰IP>:8080/video
+#  scrcpy 로(구방식): export SOLCAM_PHONE_URL=scrcpy
+#  ★빈값/미설정이면 기본 localhost(USB 웹캠) — 빈 env 때문에 scrcpy 로 새지 않게.
+SOLCAM_PHONE_URL="${SOLCAM_PHONE_URL:-http://localhost:8080/video}"
 SERIAL_DEV="${SOLCAM_SERIAL:-/dev/ttyTHS1}"   # STM 드라이버 UART (잿슨=/dev/ttyTHS1)
 SCRCPY_DIR="${SCRCPY_DIR:-$HOME/scrcpy_bin/scrcpy-linux-x86_64-v4.0}"
 SCRCPY_BIN="${SCRCPY_BIN:-$SCRCPY_DIR/scrcpy}"
@@ -169,7 +171,7 @@ run() {
   fi
 
   if [ "$phone" = 1 ]; then
-    if [ -n "${SOLCAM_PHONE_URL:-}" ]; then
+    if [ -n "$SOLCAM_PHONE_URL" ] && [ "$SOLCAM_PHONE_URL" != "scrcpy" ]; then
       # ★웹캠(IP Webcam) 방식: scrcpy/v4l2loopback 없이 cv2 가 URL 직접 읽음.
       #  localhost URL 이면 USB 터널(adb forward) 자동 — 케이블만 꽂으면 됨(저지연).
       case "$SOLCAM_PHONE_URL" in
