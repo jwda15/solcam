@@ -158,9 +158,11 @@ class UiNode(Node):
             self.battery = int(round(msg.percentage * 100.0))
 
     def _rec_cb(self, msg):
-        # phone_bridge 가 알려주는 녹화 상태(보조). _set_recording 은 멱등이라
-        #  /phone_cmd 토글과 겹쳐도 안전(같은 상태면 no-op).
-        self._set_recording(bool(msg.data))
+        # /phone/recording 은 phone_bridge 자체 상태(에코)일 뿐. ui_node 녹화는
+        #  오직 /phone_cmd "record_toggle"(_phone_cmd_cb)로만 구동한다 — 토글(여기)과
+        #  대입(/phone/recording)이 둘 다 writer를 건드리면 도착순서에 따라 꼬이므로
+        #  여기서는 writer를 건드리지 않는다(레이스 제거).
+        pass
 
     def _phone_cmd_cb(self, msg):
         # 제스처 "Rec" → /phone_cmd "record_toggle". 폰 유무와 무관하게 여기서
