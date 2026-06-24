@@ -49,6 +49,9 @@ class PhoneBridge(Node):
         # ---- 파라미터 ----
         self.declare_parameter("mock", False)
         self.declare_parameter("video_device", "/dev/video2")  # scrcpy v4l2 sink
+        # ★video_url 설정 시: scrcpy/v4l2loopback 전부 건너뛰고 cv2 가 이 URL 을 직접 읽음.
+        #  폰 'IP Webcam' 앱 등으로 띄운 MJPEG/RTSP. 예) http://192.168.0.5:8080/video
+        self.declare_parameter("video_url", "")
         self.declare_parameter("publish_rate", 20.0)           # /phone/image Hz
         self.declare_parameter("battery_period", 15.0)         # 배터리 폴링 s
         self.declare_parameter("adb_serial", "")               # 다중 기기 시 지정
@@ -72,6 +75,7 @@ class PhoneBridge(Node):
         gp = self.get_parameter
         self.mock = bool(gp("mock").value)
         self.video_device = str(gp("video_device").value)
+        self.video_url = str(gp("video_url").value).strip()
         self.publish_rate = float(gp("publish_rate").value)
         self.battery_period = float(gp("battery_period").value)
         self.adb_serial = str(gp("adb_serial").value)
@@ -129,7 +133,7 @@ class PhoneBridge(Node):
         self._cap_stop = False
         self._cap_thread = None
         if not self.mock:
-            if self.manage_scrcpy:
+            if self.manage_scrcpy and not self.video_url:   # url 모드면 scrcpy 불필요
                 self._start_scrcpy()
             self._open_capture()
             # 캡처는 별도 스레드에서 — cap.read() 블로킹이 ROS executor(워치독/배터리)를
@@ -141,16 +145,18 @@ class PhoneBridge(Node):
         if self.mock:
             self.create_timer(1.0 / max(1.0, self.publish_rate), self._tick_image_mock)
         self.create_timer(self.battery_period, self._tick_battery)
-        if not self.mock and self.manage_scrcpy and self.scrcpy_watchdog:
+        _managed = self.manage_scrcpy and not self.video_url   # url 모드면 scrcpy 관리 없음
+        if not self.mock and _managed and self.scrcpy_watchdog:
             self.create_timer(2.0, self._tick_scrcpy_watchdog)  # scrcpy 생존 감시
-        if not self.mock and self.manage_scrcpy:
+        if not self.mock and _managed:
             self.create_timer(3.0, self._tick_health)  # 장치 꼬임 감지→자동 리로드
             self.create_timer(0.2, self._tick_zoom)    # 줌 디바운스 적용(입력 멈추면 scrcpy 1회 재기동)
         self._tick_battery()  # 시작 즉시 1회
         self._publish_recording()  # 초기 false 알림
         self.pub_zoom.publish(Float32(data=float(self.zoom)))  # 초기 줌 알림
 
-        mode = "MOCK" if self.mock else f"v4l2={self.video_device}"
+        mode = ("MOCK" if self.mock else
+                (f"url={self.video_url}" if self.video_url else f"v4l2={self.video_device}"))
         self.get_logger().info(f"phone_bridge 시작 ({mode})")
 
     # ================= 영상 =================
@@ -303,6 +309,25 @@ class PhoneBridge(Node):
             except Exception:
                 pass
             self.cap = None
+        # ★URL 모드: 폰 IP Webcam(MJPEG/RTSP)을 cv2 가 직접 읽음. scrcpy/v4l2loopback 불필요.
+        if self.video_url:
+            cap = cv2.VideoCapture(self.video_url, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                self.get_logger().warn(f"video_url 열기 실패: {self.video_url} "
+                                       f"(폰 앱 켜졌는지/같은 네트워크인지 확인)")
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                self.cap = None
+                return
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            self.cap = cap
+            self.get_logger().info(f"URL 캡처 열림: {self.video_url}")
+            return
         # writer(scrcpy) 포맷 준비 전에는 열지 않음 — exclusive_caps 장치 꼬임 방지
         if not self.mock and not self._device_format_ready():
             self.cap = None

@@ -13,6 +13,7 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument("mock", default_value="false"),
         DeclareLaunchArgument("video_device", default_value="/dev/video2"),
+        DeclareLaunchArgument("video_url", default_value=""),   # 폰 IP Webcam URL(설정 시 scrcpy 불필요)
         DeclareLaunchArgument("manage_scrcpy", default_value="false"),
         DeclareLaunchArgument("adb_serial", default_value=""),
     ]
@@ -24,6 +25,7 @@ def generate_launch_description():
         parameters=[{
             "mock": LaunchConfiguration("mock"),
             "video_device": LaunchConfiguration("video_device"),
+            "video_url": LaunchConfiguration("video_url"),
             "manage_scrcpy": LaunchConfiguration("manage_scrcpy"),
             "adb_serial": LaunchConfiguration("adb_serial"),
         }],
