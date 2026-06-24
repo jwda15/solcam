@@ -19,9 +19,9 @@ ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
 VIDEO_NR="${SOLCAM_VIDEO_NR:-2}"
 VIDEO_DEV="/dev/video${VIDEO_NR}"
 CAM_SIZE="${SOLCAM_CAM_SIZE:-1280x720}"
-# 폰 영상: IP Webcam 앱 URL. 폰 핫스팟이면 게이트웨이가 보통 192.168.43.1.
-#  IP 가 다르면: export SOLCAM_PHONE_URL=http://<폰IP>:8080/video  (또는 빈값=scrcpy 방식)
-SOLCAM_PHONE_URL="${SOLCAM_PHONE_URL-http://192.168.43.1:8080/video}"
+# 폰 영상: IP Webcam 앱. 기본=USB(adb forward)로 localhost 터널 → 지연 낮고 WiFi 불필요.
+#  WiFi 로 쓰려면: export SOLCAM_PHONE_URL=http://<폰IP>:8080/video  (빈값=scrcpy 방식)
+SOLCAM_PHONE_URL="${SOLCAM_PHONE_URL-http://localhost:8080/video}"
 SERIAL_DEV="${SOLCAM_SERIAL:-/dev/ttyTHS1}"   # STM 드라이버 UART (잿슨=/dev/ttyTHS1)
 SCRCPY_DIR="${SCRCPY_DIR:-$HOME/scrcpy_bin/scrcpy-linux-x86_64-v4.0}"
 SCRCPY_BIN="${SCRCPY_BIN:-$SCRCPY_DIR/scrcpy}"
@@ -53,6 +53,7 @@ stop() {
   done
   pkill -TERM -f "v4l2-sink=${VIDEO_DEV}" 2>/dev/null    # scrcpy 는 SIGTERM(절대 -9 금지: /dev/video 잠김)
   "$ADB_BIN" shell pkill -f com.genymobile.scrcpy 2>/dev/null || true
+  "$ADB_BIN" forward --remove-all 2>/dev/null || true    # USB 영상 터널 정리
   if [ "$forced" = 1 ]; then
     sleep 1; ros2 daemon stop 2>/dev/null || true
     rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
@@ -166,7 +167,15 @@ run() {
 
   if [ "$phone" = 1 ]; then
     if [ -n "${SOLCAM_PHONE_URL:-}" ]; then
-      # ★웹캠(IP Webcam) 방식: scrcpy/v4l2loopback 없이 cv2 가 URL 직접 읽음(WiFi).
+      # ★웹캠(IP Webcam) 방식: scrcpy/v4l2loopback 없이 cv2 가 URL 직접 읽음.
+      #  localhost URL 이면 USB 터널(adb forward) 자동 — 케이블만 꽂으면 됨(저지연).
+      case "$SOLCAM_PHONE_URL" in
+        *localhost*|*127.0.0.1*)
+          PORT=$(echo "$SOLCAM_PHONE_URL" | sed -n 's#.*://[^:/]*:\([0-9]\+\).*#\1#p'); PORT="${PORT:-8080}"
+          echo "[run]   USB 터널: adb forward tcp:$PORT (폰 IP Webcam Start server 필요)"
+          "$ADB_BIN" forward "tcp:$PORT" "tcp:$PORT" >/dev/null 2>&1 \
+            || echo "[run]   ! adb forward 실패 — 폰 USB 연결/디버깅 허용 확인" ;;
+      esac
       echo "[run] 4) phone_bridge (webcam URL=$SOLCAM_PHONE_URL, $LOG/phone.log)"
       ros2 run ros2_phone_bridge phone_bridge --ros-args \
            -p video_url:="$SOLCAM_PHONE_URL" -p manage_scrcpy:=false \
