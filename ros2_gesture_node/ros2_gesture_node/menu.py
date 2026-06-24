@@ -122,8 +122,8 @@ def build_menu(p: dict) -> MenuNode:
                 "p_right": adj("Orbit CW",  "ORBIT_JOG",  -jo, delta=False),  # 시계
                 "p_up":    adj("Farther",   "RADIAL_JOG", -jr, delta=False),  # 멀어짐(− 접근)
                 "p_down":  adj("Closer",    "RADIAL_JOG", +jr, delta=False),  # 접근(+)
-                "gun_left":  adj("Pan L", "HEADING_OFFSET", +dh),  # 헤딩 오프셋(구도, 유지모드만)
-                "gun_right": adj("Pan R", "HEADING_OFFSET", -dh),
+                # ★Pan(쓰리건) 제거 — 바깥 Wheel 자전(Spin)과 중복. 촬영구도(몸체-OAK 각)는
+                #   자전 후 나갈 때 뜨는 Front/Right/Back/Left 선택으로 정확히 확정한다.
                 "two": adj("Face Owner", "HEADING_OFFSET", 0.0, delta=False, stay=False),
             }),
         }),

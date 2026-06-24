@@ -40,9 +40,9 @@ control_node:
     az_dead_near: 0.28      # rad, 가까울 때 데드존 [0623 0.35→0.28(≈16°) 근거리 더 과감]
     az_dead_far: 0.18       # rad, 멀 때 데드존(≈10.3°)
     # ----- 상단 yaw 케이블 꼬임 방어 (시간기반 데드레코닝) -----
-    yaw_time_limit: 0.18    # s, 한 방향 누적 명령시간 하드 한계 [0623 0.16→0.18(≈116°<120°)]
-    yaw_time_warn: 0.16     # s, 이 근처서 /yaw_limit_warn→UI 하단 빨간선 2s 경고
-    top_yaw_speed: 11.22    # rad/s, 스테이지 회전속도(측정 90°/0.14s). 누적시간→각 환산용
+    yaw_time_limit: 1.8     # s, 한 방향 누적 명령시간 하드 한계 [0625 →1.8(10배): 실측 180°까지]
+    yaw_time_warn: 1.6      # s, 이 근처서 /yaw_limit_warn→UI 하단 빨간선 2s 경고
+    top_yaw_speed: 1.75     # rad/s, 스테이지 회전속도 [0625 →1.75: 1.8s≈180° 실측]. 폴백용
     # (구·미사용) 각도기반 가드 — 시간기반으로 대체됨
     top_yaw_limit: 1.5708
     top_yaw_limit_pos: 0.0995
