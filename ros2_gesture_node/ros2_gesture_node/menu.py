@@ -93,12 +93,13 @@ def build_menu(p: dict) -> MenuNode:
     return MenuNode("Main", children={
         # ── ① 주행 모드 (손가락 개수) ──────────────────────────────
         "one": MenuNode("Mode", children={
-            "one":   MenuNode("Idle",   action=Action("mode", "Idle",   {"mode": 0})),
-            "two":   MenuNode("Follow", action=Action("mode", "Follow", {"mode": 1})),
-            "three": MenuNode("Rotate", action=Action("mode", "Rotate", {"mode": 2})),
+            # ★Follow2 를 앞으로(자주 씀, odom 불필요). 순서: Idle/Follow2/Follow1/More
+            "one":   MenuNode("Idle",    action=Action("mode", "Idle",    {"mode": 0})),
+            "two":   MenuNode("Follow2", action=Action("mode", "Follow2", {"mode": 3})),
+            "three": MenuNode("Follow1", action=Action("mode", "Follow1", {"mode": 1})),
             "four":  MenuNode("More", children={      # 4칸 한계 → 추가 모드 묶음
-                "one": MenuNode("Follow2", action=Action("mode", "Follow2", {"mode": 3})),
-                "two": MenuNode("Orbit",   action=Action("mode", "Orbit",   {"mode": 4})),
+                "one": MenuNode("Rotate", action=Action("mode", "Rotate", {"mode": 2})),
+                "two": MenuNode("Orbit",  action=Action("mode", "Orbit",  {"mode": 4})),
             }),
         }),
         # ── ② 휠(차체 이동) — 로봇기준 순수 jog (odom 無, 모든 모드 공통) ─────

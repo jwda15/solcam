@@ -74,9 +74,9 @@ def test_navigate_and_mode_action():
     t = open_menu(sm)
     t = nav(sm, "one", t)                         # Mode 카테고리
     assert sm.path[-1].label == "Mode"
-    evs, t = feed(sm, "three", t, 1.6)            # Rotate(모드2)
+    evs, t = feed(sm, "three", t, 1.6)            # Follow1(모드1) — 순서변경
     acts = [e for e in evs if e.kind == "action"]
-    assert acts and acts[0].action.payload == {"mode": 2}
+    assert acts and acts[0].action.payload == {"mode": 1}
     assert "close" in kinds(evs) and sm.state == "IDLE"
 
 
@@ -85,9 +85,15 @@ def test_more_submodes():
     t = open_menu(sm)
     t = nav(sm, "one", t)                         # Mode
     t = nav(sm, "four", t)                        # More
-    evs, t = feed(sm, "two", t, 1.6)              # Orbit(모드4)
+    evs, t = feed(sm, "one", t, 1.6)              # Rotate(모드2) — More 안 1번
     acts = [e for e in evs if e.kind == "action"]
-    assert acts and acts[0].action.payload == {"mode": 4}
+    assert acts and acts[0].action.payload == {"mode": 2}
+    # Orbit(모드4)은 More 안 2번
+    sm2 = make_sm(); t2 = open_menu(sm2)
+    t2 = nav(sm2, "one", t2); t2 = nav(sm2, "four", t2)
+    evs2, _ = feed(sm2, "two", t2, 1.6)
+    a2 = [e for e in evs2 if e.kind == "action"]
+    assert a2 and a2[0].action.payload == {"mode": 4}
 
 
 # ---------- 휠: 로봇기준 jog (BODY_VX/VY/WZ, odom 무관) ----------
