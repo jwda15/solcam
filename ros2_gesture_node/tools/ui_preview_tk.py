@@ -175,7 +175,9 @@ class CameraStream:
 class Preview:
     def __init__(self, cam=None):
         adj = {"dist_step": 0.3, "seg_angle_step": math.radians(8),
-               "heading_step": math.radians(15), "lift_step": 0.05}
+               "heading_step": math.radians(15), "lift_step": 0.05,
+               "jog_lin": 0.12, "jog_ang": 0.6,
+               "radial_jog": 0.12, "orbit_jog": 0.12}
         self.sm = MenuStateMachine(build_menu(adj))
         self.mode = 1
         self.battery = 87

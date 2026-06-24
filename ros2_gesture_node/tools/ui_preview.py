@@ -30,7 +30,9 @@ from ros2_gesture_node.hud import Hud
 import math
 _D = math.pi / 180.0
 STEPS = {"dist_step": 0.3, "seg_angle_step": 8.0 * _D,
-         "heading_step": 15.0 * _D, "lift_step": 0.1}
+         "heading_step": 15.0 * _D, "lift_step": 0.1,
+         "jog_lin": 0.12, "jog_ang": 0.6,
+         "radial_jog": 0.12, "orbit_jog": 0.12}
 # 방향 = 화살표, 자전 = Z/X, 리셋 = 2, 뒤로 = K
 KEY_GESTURE = {pygame.K_l: "like", pygame.K_k: "dislike",
                pygame.K_1: "one", pygame.K_2: "two", pygame.K_3: "three", pygame.K_4: "four",
