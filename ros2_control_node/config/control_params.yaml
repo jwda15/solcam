@@ -33,8 +33,16 @@ control_node:
     top_yaw_sign: 1.0       # 회전 방향이 실제와 반대면 -1.0 (실차 확인 후 보정)
     # ----- 상단 yaw 펄스 제어 (모터 거칠어서 톡톡 끊어 명령) -----
     yaw_pulse_mode: true    # true=펄스(권장) / false=연속(구 동작)
-    yaw_pulse_period: 0.5   # s, 펄스 간격(이 주기마다 최대 1회)
+    yaw_pulse_period: 0.5   # s, 펄스 간격(depth_scale=false 일 때만 사용)
     yaw_pulse_sec: 0.02     # s, 1회 펄스 길이(≈13°). 50Hz라 0.02=1틱이 실질 최소
+    # ----- 거리 의존(가까울수록 주기 길게=느리게 + 데드존 크게) -----
+    yaw_depth_scale: true   # false면 위 고정 yaw_pulse_period / az_dead 사용
+    yaw_near_dist: 1.0      # m, 이하 = 가까움
+    yaw_far_dist: 3.0       # m, 이상 = 멈
+    yaw_period_near: 3.0    # s, 가까울 때 주기(느리게)
+    yaw_period_far: 1.0     # s, 멀 때 주기(빠르게)
+    az_dead_near: 0.35      # rad, 가까울 때 데드존(≈20°)
+    az_dead_far: 0.18       # rad, 멀 때 데드존(≈10.3°)
     # ----- 상단 yaw 케이블 꼬임 방어 (시간기반 데드레코닝) -----
     yaw_time_limit: 0.16    # s, 한 방향 누적 명령시간 하드 한계(≈103°<120°꼬임). 넘으면 정지
     yaw_time_warn: 0.14     # s, 이 근처서 /yaw_limit_warn→UI 하단 빨간선 2s 경고

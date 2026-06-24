@@ -56,7 +56,9 @@ void ControllerBase::trackTopYaw(const ControlInput & in, ControlCommand & cmd)
   //  회전, 그 안이면 정지. 절대각을 적분하지 않는다(피드백 없음).
   if (params_.yaw_velocity_mode) {
     cmd.top_yaw_active = in.owner.is_detected;
-    if (in.owner.is_detected && std::abs(in.owner.azimuth) > params_.az_dead) {
+    // 거리 의존 데드존: 주인이 가까울수록 크게(예민함 둔감화).
+    const double az_dead = params_.azDeadFor(in.owner.distance);
+    if (in.owner.is_detected && std::abs(in.owner.azimuth) > az_dead) {
       // 주인 방위(azimuth)를 0으로 만드는 방향으로 회전. 부호가 실제 회전과
       //  반대면 top_yaw_sign=-1 로 뒤집는다. (|1.0| > 펌웨어 deadband)
       double dir = (in.owner.azimuth >= 0.0) ? -1.0 : 1.0;

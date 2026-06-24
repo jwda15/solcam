@@ -77,7 +77,7 @@ private:
   void publishDebug(const ControlCommand & cmd, const ControlInput & in);
   // 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운. ctrl->step() 뒤 cmd 후처리.
   //  명령부호로 head_angle_ 적분, 한계 넘으면 정지, 쿨다운 중엔 완전정지.
-  void applyTopYawGuard(ControlCommand & cmd, double dt);
+  void applyTopYawGuard(ControlCommand & cmd, double dt, double owner_dist);
   double targetDistanceForMode();   // UI/디버그용: 현재 모드의 유지 목표거리[m]
   bool ownerTimedOut() const;
   bool odomTimedOut() const;

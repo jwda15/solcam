@@ -77,6 +77,17 @@ struct ControllerParams
   double top_yaw_speed  = 11.22;     // rad/s, 스테이지 회전속도(측정 90°/0.14s).
                                      //  누적시간→스테이지각(추정용) 환산. 어긋나면 보정.
 
+  // ★거리 의존 펄스: 주인이 가까우면 azimuth가 예민(작은 이동=큰 각)해 펄스가 자주
+  //   쌓여 한계에 금방 도달 → 가까울수록 "주기 길게 + 데드존 크게"로 둔감화.
+  //   near_dist(이하)~far_dist(이상) 사이를 선형보간(밖은 클램프).
+  bool   yaw_depth_scale  = true;    // false면 고정값(yaw_pulse_period, az_dead) 사용
+  double yaw_near_dist    = 1.0;     // m, 이 거리 이하 = "가까움"
+  double yaw_far_dist     = 3.0;     // m, 이 거리 이상 = "멈"
+  double yaw_period_near  = 3.0;     // s, 가까울 때 펄스 주기(길게=둔감)
+  double yaw_period_far   = 1.0;     // s, 멀 때 펄스 주기(짧게=민감)
+  double az_dead_near     = 0.35;    // rad, 가까울 때 데드존(≈20°, 크게)
+  double az_dead_far      = 0.18;    // rad, 멀 때 데드존(≈10.3°, 작게)
+
   // ------------------------------------------------------------------------
   //  몸체 위치 게인 (선분 끝점 추종; 메카넘 → 속도 명령, PD)
   // ------------------------------------------------------------------------
@@ -134,6 +145,26 @@ struct ControllerParams
 
   // --- 상단 yaw 언와인딩 (TODO: 지금은 자리만, 사실상 무한) ---
   double theta_soft_max = 1.0e9;   // rad (나중에 ~±1.8바퀴로 축소 예정)
+
+  // ----- 거리 의존 보간 헬퍼 (near_dist 이하=vn, far_dist 이상=vf, 사이 선형) -----
+  double lerpByDist(double d, double vn, double vf) const
+  {
+    if (yaw_far_dist <= yaw_near_dist) { return vn; }
+    double t = (d - yaw_near_dist) / (yaw_far_dist - yaw_near_dist);
+    t = (t < 0.0) ? 0.0 : (t > 1.0 ? 1.0 : t);
+    return vn + t * (vf - vn);
+  }
+  // 주인 거리[m] → 펄스 주기[s] (가까울수록 김=느림). depth_scale off면 고정값.
+  double yawPeriodFor(double dist) const
+  {
+    return yaw_depth_scale ? lerpByDist(dist, yaw_period_near, yaw_period_far)
+                           : yaw_pulse_period;
+  }
+  // 주인 거리[m] → azimuth 데드존[rad] (가까울수록 큼). depth_scale off면 az_dead.
+  double azDeadFor(double dist) const
+  {
+    return yaw_depth_scale ? lerpByDist(dist, az_dead_near, az_dead_far) : az_dead;
+  }
 };
 
 // ----------------------------------------------------------------------------

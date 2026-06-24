@@ -42,11 +42,18 @@ except ImportError:
 AZ_DEAD = 0.15          # rad, 중앙 정지 불감대 (≈±8.6°)
 TOP_YAW_SIGN = 1.0      # 회전 방향이 실제와 반대면 -1.0
 # 펄스 제어 + 시간기반 케이블 가드 (applyTopYawGuard 와 동일)
-YAW_PULSE_PERIOD = 0.5  # s, 펄스 간격
 YAW_PULSE_SEC    = 0.02 # s, 1회 펄스 길이
 YAW_TIME_LIMIT   = 0.16 # s, 누적 명령시간 하드 한계
 YAW_TIME_WARN    = 0.14 # s, 한계 근접 경고
 TOP_YAW_SPEED    = 11.22 # rad/s, 스테이지 속도(측정) — 누적시간→각 환산
+# 거리 의존: 가까울수록 주기 길게(느리게) + 데드존 크게 (params.hpp 와 동일)
+YAW_DEPTH_SCALE  = True
+YAW_NEAR_DIST    = 1.0
+YAW_FAR_DIST     = 3.0
+YAW_PERIOD_NEAR  = 3.0
+YAW_PERIOD_FAR   = 1.0
+AZ_DEAD_NEAR     = 0.35
+AZ_DEAD_FAR      = 0.18
 
 # ---- tracking_node.cpp 와 동일한 평활/외삽 파라미터 (/owner_pose 재현용) ----
 MAX_SPEED_MMPS = 2000.0   # ±2.0 m/s 속도 클립
@@ -74,6 +81,21 @@ CYP = PREV_H / 2.0
 
 def _clip(v, lo, hi):
     return lo if v < lo else (hi if v > hi else v)
+
+
+def _lerp_dist(d, vn, vf):
+    if YAW_FAR_DIST <= YAW_NEAR_DIST:
+        return vn
+    t = _clip((d - YAW_NEAR_DIST) / (YAW_FAR_DIST - YAW_NEAR_DIST), 0.0, 1.0)
+    return vn + t * (vf - vn)
+
+
+def period_for(d):
+    return _lerp_dist(d, YAW_PERIOD_NEAR, YAW_PERIOD_FAR) if YAW_DEPTH_SCALE else 0.5
+
+
+def az_dead_for(d):
+    return _lerp_dist(d, AZ_DEAD_NEAR, AZ_DEAD_FAR) if YAW_DEPTH_SCALE else AZ_DEAD
 
 
 class OwnerTracker:
@@ -179,18 +201,18 @@ class YawPulseSim:
         self.accum = 0.0
         self.warn = False
 
-    def update(self, az, alive, now):
+    def update(self, az, dist, alive, now):
         dt = (now - self.t) if self.t else (1.0 / 30.0)
         if dt <= 0.0 or dt > 1.0:
             dt = 1.0 / 30.0
         self.t = now
         want = 0
-        if alive and abs(az) > AZ_DEAD:
+        if alive and abs(az) > az_dead_for(dist):     # 거리 의존 데드존
             want = int(TOP_YAW_SIGN * (-1 if az >= 0 else 1))
         out = 0
         if now < self.pulse_until:
             out = self.pulse_dir
-        elif want != 0 and (now - self.last_pulse) >= YAW_PULSE_PERIOD:
+        elif want != 0 and (now - self.last_pulse) >= period_for(dist):  # 거리 의존 주기
             self.pulse_dir = want
             self.pulse_until = now + YAW_PULSE_SEC
             self.last_pulse = now
@@ -248,11 +270,14 @@ def draw_tracking(frame, persons, owner_det, trk, yaw, now):
     deg = math.degrees(yaw.accum * TOP_YAW_SPEED)         # 누적 명령시간→대략 스테이지각
     if trk.alive:
         az = math.atan2(trk.sx, trk.sz)
-        side = "CENTER" if abs(az) <= AZ_DEAD else ("RIGHT" if az >= 0 else "LEFT")
+        dist = math.hypot(trk.sx, trk.sz) / 1000.0
+        dz = az_dead_for(dist)
+        per = period_for(dist)
+        side = "CENTER" if abs(az) <= dz else ("RIGHT" if az >= 0 else "LEFT")
         state = "EXTRAP(KF)" if trk.extrap else "TRACK"
         lines = [
-            f"TOP-YAW (pulse) [{state}]",
-            f"azimuth = {math.degrees(az):+.1f} deg  (deadzone +-{math.degrees(AZ_DEAD):.1f})  owner={side}",
+            f"TOP-YAW (pulse) [{state}]  d={dist:.2f}m",
+            f"azimuth = {math.degrees(az):+.1f} deg  deadzone +-{math.degrees(dz):.1f}  period {per:.1f}s  owner={side}",
             f"accum cmd-time = {yaw.accum:+.3f}s / +-{YAW_TIME_LIMIT:.2f}  (~{deg:+.0f} deg)",
         ]
         col = (0, 165, 255) if trk.extrap else (0, 220, 0)
@@ -287,10 +312,11 @@ def draw_map(owner_det, trk, now, size=460, max_range=4.0):
         cv2.putText(m, f"{r}m", (cx + 4, cy - int(r * ppm) + 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (110, 110, 110), 1)
     cv2.line(m, (cx, cy), (cx, cy - int(max_range * ppm)), (70, 70, 70), 1)
+    dz = az_dead_for(math.hypot(trk.sx, trk.sz) / 1000.0) if trk.alive else AZ_DEAD_FAR
     for s in (+1, -1):
         cv2.line(m, (cx, cy),
-                 (cx + int(math.sin(s*AZ_DEAD)*max_range*ppm),
-                  cy - int(math.cos(s*AZ_DEAD)*max_range*ppm)), (0, 90, 90), 1)
+                 (cx + int(math.sin(s*dz)*max_range*ppm),
+                  cy - int(math.cos(s*dz)*max_range*ppm)), (0, 90, 90), 1)
     cv2.drawMarker(m, (cx, cy), (0, 220, 0), cv2.MARKER_TRIANGLE_UP, 16, 2)
 
     def plot(x_mm, z_mm, color, rad):
@@ -361,7 +387,8 @@ def main():
 
             now = time.time()
             az = math.atan2(trk.sx, trk.sz) if trk.alive else 0.0
-            yaw.update(az, trk.alive, now)     # 펄스 제어 시뮬(누적/한계 갱신)
+            dist = math.hypot(trk.sx, trk.sz) / 1000.0 if trk.alive else 0.0
+            yaw.update(az, dist, trk.alive, now)   # 펄스 제어 시뮬(거리 의존 주기/데드존)
 
             cv2.imshow("OAK Tracking", draw_tracking(frame, persons, owner_det, trk, yaw, now))
             cv2.imshow("2D Map", draw_map(owner_det, trk, now))

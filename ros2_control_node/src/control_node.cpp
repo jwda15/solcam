@@ -124,6 +124,13 @@ void ControlNode::declareParams()
   this->declare_parameter("yaw_pulse_sec",     c.yaw_pulse_sec);
   this->declare_parameter("yaw_time_limit",    c.yaw_time_limit);
   this->declare_parameter("yaw_time_warn",     c.yaw_time_warn);
+  this->declare_parameter("yaw_depth_scale",   c.yaw_depth_scale);
+  this->declare_parameter("yaw_near_dist",     c.yaw_near_dist);
+  this->declare_parameter("yaw_far_dist",      c.yaw_far_dist);
+  this->declare_parameter("yaw_period_near",   c.yaw_period_near);
+  this->declare_parameter("yaw_period_far",    c.yaw_period_far);
+  this->declare_parameter("az_dead_near",      c.az_dead_near);
+  this->declare_parameter("az_dead_far",       c.az_dead_far);
 
   // 몸체 위치 (선분 끝점 추종, PD)
   this->declare_parameter("kp_pos",   c.kp_pos);
@@ -198,6 +205,13 @@ void ControlNode::loadParams()
   params_.yaw_pulse_sec     = this->get_parameter("yaw_pulse_sec").as_double();
   params_.yaw_time_limit    = this->get_parameter("yaw_time_limit").as_double();
   params_.yaw_time_warn     = this->get_parameter("yaw_time_warn").as_double();
+  params_.yaw_depth_scale   = this->get_parameter("yaw_depth_scale").as_bool();
+  params_.yaw_near_dist     = this->get_parameter("yaw_near_dist").as_double();
+  params_.yaw_far_dist      = this->get_parameter("yaw_far_dist").as_double();
+  params_.yaw_period_near   = this->get_parameter("yaw_period_near").as_double();
+  params_.yaw_period_far    = this->get_parameter("yaw_period_far").as_double();
+  params_.az_dead_near      = this->get_parameter("az_dead_near").as_double();
+  params_.az_dead_far       = this->get_parameter("az_dead_far").as_double();
 
   params_.kp_pos   = this->get_parameter("kp_pos").as_double();
   params_.kd_pos   = this->get_parameter("kd_pos").as_double();
@@ -512,7 +526,7 @@ void ControlNode::controlStep()
 
   // 5.5) 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운 (상단yaw 명령 후처리).
   //   각도가 아닌 명령시간으로 제어하므로 현재각을 여기서 적분·판정한다.
-  applyTopYawGuard(cmd, dt);
+  applyTopYawGuard(cmd, dt, in.owner.distance);
 
   // 6) 장애물 회피: 몸체 속도만 깎음(목표는 불변 → 회피 후 자연 복귀)
   if (obstacle_params_.enabled) {
@@ -634,7 +648,7 @@ void ControlNode::publishDebug(const ControlCommand & cmd, const ControlInput & 
 //  연속이 아니라 yaw_pulse_period 마다 yaw_pulse_sec 동안만 톡 보낸다(모터가 거칠어서).
 //  보낸 "명령 시간"을 방향별로 누적(yaw_time_accum_)해 ±yaw_time_limit 넘으면 차단(케이블).
 //  head_angle_ = 누적시간×속도 로 스테이지각을 추정(StateEstimator 용).
-void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt)
+void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner_dist)
 {
   rclcpp::Time now = this->now();
 
@@ -654,7 +668,7 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt)
     if (now < yaw_pulse_until_) {
       out_dir = yaw_pulse_dir_;                 // 진행 중인 펄스 유지
     } else if (want != 0 &&
-               (now - yaw_last_pulse_).seconds() >= params_.yaw_pulse_period) {
+               (now - yaw_last_pulse_).seconds() >= params_.yawPeriodFor(owner_dist)) {
       yaw_pulse_dir_   = want;                  // 새 펄스 시작
       yaw_pulse_until_ = now + rclcpp::Duration::from_seconds(params_.yaw_pulse_sec);
       yaw_last_pulse_  = now;
