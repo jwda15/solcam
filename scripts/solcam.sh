@@ -25,7 +25,10 @@ SOLCAM_PHONE_URL="${SOLCAM_PHONE_URL-http://localhost:8080/video}"
 SERIAL_DEV="${SOLCAM_SERIAL:-/dev/ttyTHS1}"   # STM 드라이버 UART (잿슨=/dev/ttyTHS1)
 SCRCPY_DIR="${SCRCPY_DIR:-$HOME/scrcpy_bin/scrcpy-linux-x86_64-v4.0}"
 SCRCPY_BIN="${SCRCPY_BIN:-$SCRCPY_DIR/scrcpy}"
-ADB_BIN="${ADB_BIN:-$SCRCPY_DIR/adb}"
+# adb: 시스템 adb 우선(소스빌드 scrcpy엔 adb가 없음). 둘 다 없으면 마지막 폴백.
+if [ -n "${ADB_BIN:-}" ]; then :
+elif command -v adb >/dev/null 2>&1; then ADB_BIN="$(command -v adb)"
+else ADB_BIN="$SCRCPY_DIR/adb"; fi
 LOG="${SOLCAM_LOG:-/tmp/solcam}"
 FULLSCREEN="${SOLCAM_FULLSCREEN:-true}"   # LCD 전체화면. 개발 PC면 SOLCAM_FULLSCREEN=false
 export DISPLAY="${DISPLAY:-:0}"
