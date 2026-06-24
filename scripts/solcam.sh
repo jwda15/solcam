@@ -19,6 +19,9 @@ ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
 VIDEO_NR="${SOLCAM_VIDEO_NR:-2}"
 VIDEO_DEV="/dev/video${VIDEO_NR}"
 CAM_SIZE="${SOLCAM_CAM_SIZE:-1280x720}"
+# 폰 영상: IP Webcam 앱 URL. 폰 핫스팟이면 게이트웨이가 보통 192.168.43.1.
+#  IP 가 다르면: export SOLCAM_PHONE_URL=http://<폰IP>:8080/video  (또는 빈값=scrcpy 방식)
+SOLCAM_PHONE_URL="${SOLCAM_PHONE_URL-http://192.168.43.1:8080/video}"
 SERIAL_DEV="${SOLCAM_SERIAL:-/dev/ttyTHS1}"   # STM 드라이버 UART (잿슨=/dev/ttyTHS1)
 SCRCPY_DIR="${SCRCPY_DIR:-$HOME/scrcpy_bin/scrcpy-linux-x86_64-v4.0}"
 SCRCPY_BIN="${SCRCPY_BIN:-$SCRCPY_DIR/scrcpy}"
@@ -162,13 +165,22 @@ run() {
   fi
 
   if [ "$phone" = 1 ]; then
-    echo "[run] 4) phone_bridge (managed scrcpy + 자동복구, $LOG/phone.log)"
-    ros2 run ros2_phone_bridge phone_bridge --ros-args \
-         -p video_device:="$VIDEO_DEV" -p manage_scrcpy:=true \
-         -p scrcpy_bin:="$SCRCPY_BIN" -p adb_bin:="$ADB_BIN" \
-         -p camera_size:="$CAM_SIZE" \
-         -p v4l2_reset_cmd:="$RESET_CMD" -p wedge_timeout:=10.0 \
-         >"$LOG/phone.log" 2>&1 &
+    if [ -n "${SOLCAM_PHONE_URL:-}" ]; then
+      # ★웹캠(IP Webcam) 방식: scrcpy/v4l2loopback 없이 cv2 가 URL 직접 읽음(WiFi).
+      echo "[run] 4) phone_bridge (webcam URL=$SOLCAM_PHONE_URL, $LOG/phone.log)"
+      ros2 run ros2_phone_bridge phone_bridge --ros-args \
+           -p video_url:="$SOLCAM_PHONE_URL" -p manage_scrcpy:=false \
+           -p adb_bin:="$ADB_BIN" \
+           >"$LOG/phone.log" 2>&1 &
+    else
+      echo "[run] 4) phone_bridge (managed scrcpy + 자동복구, $LOG/phone.log)"
+      ros2 run ros2_phone_bridge phone_bridge --ros-args \
+           -p video_device:="$VIDEO_DEV" -p manage_scrcpy:=true \
+           -p scrcpy_bin:="$SCRCPY_BIN" -p adb_bin:="$ADB_BIN" \
+           -p camera_size:="$CAM_SIZE" \
+           -p v4l2_reset_cmd:="$RESET_CMD" -p wedge_timeout:=10.0 \
+           >"$LOG/phone.log" 2>&1 &
+    fi
     # 폰 첫 프레임 확인은 백그라운드(논블로킹) — 안 와도 UI/파이프라인은 계속 돈다.
     ( for i in $(seq 1 20); do sleep 1
         if ros2 topic hz /phone/image --window 5 2>/dev/null | grep -q average; then
