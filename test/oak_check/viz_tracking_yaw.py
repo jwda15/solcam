@@ -43,16 +43,16 @@ AZ_DEAD = 0.15          # rad, 중앙 정지 불감대 (≈±8.6°)
 TOP_YAW_SIGN = 1.0      # 회전 방향이 실제와 반대면 -1.0
 # 펄스 제어 + 시간기반 케이블 가드 (applyTopYawGuard 와 동일)
 YAW_PULSE_SEC    = 0.06 # s, 1회 펄스 길이 [0623 0.02→0.06]
-YAW_TIME_LIMIT   = 0.16 # s, 누적 명령시간 하드 한계
-YAW_TIME_WARN    = 0.14 # s, 한계 근접 경고
+YAW_TIME_LIMIT   = 0.18 # s, 누적 명령시간 하드 한계
+YAW_TIME_WARN    = 0.16 # s, 한계 근접 경고
 TOP_YAW_SPEED    = 11.22 # rad/s, 스테이지 속도(측정) — 누적시간→각 환산
 # 거리 의존: 가까울수록 주기 길게(느리게) + 데드존 크게 (params.hpp 와 동일)
 YAW_DEPTH_SCALE  = True
 YAW_NEAR_DIST    = 1.0
 YAW_FAR_DIST     = 3.0
-YAW_PERIOD_NEAR  = 3.0
+YAW_PERIOD_NEAR  = 2.2
 YAW_PERIOD_FAR   = 1.2
-AZ_DEAD_NEAR     = 0.35
+AZ_DEAD_NEAR     = 0.28
 AZ_DEAD_FAR      = 0.18
 
 # ---- 몸체 제어 의도(3번째 창) — control_params.yaml 과 일치 ----
