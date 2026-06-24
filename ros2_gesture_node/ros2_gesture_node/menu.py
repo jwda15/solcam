@@ -57,6 +57,8 @@ class MenuNode:
     children: Optional[Dict[str, "MenuNode"]] = None   # 제스처 → 자식
     action: Optional[Action] = None                    # 리프면 동작
     dialog: Optional[str] = None                        # 설정 시 중앙 확인 다이얼로그(프롬프트)
+    timeout: Optional[float] = None                     # 이 노드 전용 무입력 타임아웃[s] (없으면 기본)
+    yaw_set: Optional["MenuNode"] = None                # (root 전용) 자전 후 각도확정 서브메뉴
 
     @property
     def is_leaf(self) -> bool:
@@ -165,6 +167,16 @@ def build_menu(p: dict) -> MenuNode:
             }),
         }),
     })
+    # ── 각도확정(AngleSet) — 트리엔 없고, Wheel 에서 자전(spin)을 쓰고 나갈 때만 뜬다 ──
+    #   촬영카메라(몸체)가 OAK(주인) 기준 어느 방향을 보는지 손가락 개수로 확정:
+    #   1.Front(0°) 2.Right(+90°) 3.Back(180°) 4.Left(270°). More 의 1234 프리셋과 동일 동작.
+    #   1.5초 유지하면 선택→발행→닫힘. 20초 무선택이면 닫고 데드레코닝값 유지.
+    root.yaw_set = MenuNode("AngleSet", timeout=20.0, children={
+        "one":   MenuNode("Front", action=Action("yaw", "Front", {"deg": 0})),
+        "two":   MenuNode("Right", action=Action("yaw", "Right", {"deg": 90})),
+        "three": MenuNode("Back",  action=Action("yaw", "Back",  {"deg": 180})),
+        "four":  MenuNode("Left",  action=Action("yaw", "Left",  {"deg": 270})),
+    })
     return root
 
 
@@ -188,6 +200,7 @@ class MenuStateMachine:
         self._await_release: Optional[str] = None
         self._last_activity = 0.0
         self._repeating = False
+        self._spin_used = False   # 이번 Wheel 세션에서 자전(BODY_WZ)을 썼는가
 
     # ------------------------------------------------------------------
     def update(self, gesture: Optional[str], t: float) -> List[Event]:
@@ -211,7 +224,12 @@ class MenuStateMachine:
                                 (cur.children and gesture in cur.children)) else None
             if valid is not None:
                 self._touch_activity(t)
-            if t - self._last_activity > self.menu_timeout:
+            node_timeout = cur.timeout if cur.timeout is not None else self.menu_timeout
+            if t - self._last_activity > node_timeout:
+                # 자전을 쓰고 Wheel 안에서 타임아웃 → 닫지 말고 각도확정으로
+                if self._spin_used and self._wheel_in_path():
+                    self._enter_yaw_set(t, ev)
+                    return ev
                 self._close("timeout", ev)
                 return ev
             need = (self.repeat_interval
@@ -269,6 +287,7 @@ class MenuStateMachine:
         self.path = [self.root]
         self._cand = None
         self._repeating = False
+        self._spin_used = False
         self._await_release = TRIGGER
         self._last_activity = t
         ev.append(Event("open"))
@@ -278,12 +297,33 @@ class MenuStateMachine:
         self.path = []
         self._cand = None
         self._repeating = False
+        self._spin_used = False
         ev.append(Event("close", reason=reason))
+
+    def _wheel_in_path(self) -> bool:
+        """현재 경로에 Wheel(②) 노드가 있는가 (Wheel 또는 Wheel/More)."""
+        wheel = self.root.children.get("two")
+        return self.root.yaw_set is not None and any(n is wheel for n in self.path)
+
+    def _enter_yaw_set(self, t, ev, await_rel=None):
+        """자전 후 Wheel 을 떠나는 순간 → 각도확정(AngleSet) 서브메뉴로 진입."""
+        self._spin_used = False
+        self.path = [self.root, self.root.yaw_set]
+        self._cand = None
+        self._repeating = False
+        self._await_release = await_rel
+        self._last_activity = t
+        ev.append(Event("navigate"))
 
     def _fire(self, gesture, t, ev):
         cur = self.path[-1]
         self._repeating = False
         if gesture == BACK:
+            # ★자전을 쓰고 Wheel(②) 에서 역따봉/k 로 나갈 때 → 각도확정 선택지로
+            if self._spin_used and self.root.yaw_set is not None \
+                    and cur is self.root.children.get("two"):
+                self._enter_yaw_set(t, ev, await_rel=BACK)
+                return
             if len(self.path) > 1:
                 self.path.pop()
                 ev.append(Event("navigate"))
@@ -295,6 +335,10 @@ class MenuStateMachine:
             return
         child = cur.children[gesture]
         if child.is_leaf:
+            # 자전(BODY_WZ) 발동 기록 → Wheel 나갈 때 각도확정 트리거
+            if child.action.kind == "adjust" \
+                    and child.action.payload.get("param") == "BODY_WZ":
+                self._spin_used = True
             self.last_action_name = child.action.name
             ev.append(Event("action", action=child.action))
             if child.action.stay:

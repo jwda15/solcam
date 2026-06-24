@@ -107,6 +107,10 @@ private:
   rclcpp::Time yaw_last_pulse_;       // 마지막 펄스 시작 시각(주기 판정)
   int          yaw_pulse_dir_ = 0;    // 현재 펄스 방향(+1/-1)
   bool         yaw_warn_latched_ = false;  // 한계근접 경고 1회 발행 디바운스
+  // ----- 촬영구도 기동(프리셋 선택 후 자동 자전+재정렬) 상태 -----
+  bool         compose_active_ = false;    // 기동 중(주행 보류)
+  bool         compose_pub_last_ = false;  // /compose_active 마지막 발행값(변화 시만)
+  rclcpp::Time compose_until_;             // 이 시각까지 기동(회전시간 추정 + 정착 2s)
   double      odom_wz_ = 0.0;        // 오도메트리 측정 몸체 yaw rate [rad/s]
   double      prev_theta_head_ = 0.0;    // 상단 yaw 속도 추정용 직전값
   bool        have_prev_theta_ = false;
@@ -142,6 +146,7 @@ private:
   rclcpp::Publisher<ros2_control_node::msg::ControlCmd>::SharedPtr cmd_pub_;
   rclcpp::Publisher<ros2_control_node::msg::ControlDebug>::SharedPtr debug_pub_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr yaw_warn_pub_;  // 한계근접→UI 빨간선
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr compose_pub_;    // 구도기동중→UI 파란선
   rclcpp::Subscription<ros2_tracking_node::msg::OwnerPose>::SharedPtr owner_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr teleop_sub_;

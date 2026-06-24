@@ -81,6 +81,7 @@ class UiNode(Node):
         self.tgt_dist = self.tgt_az = 0.0   # 타겟 거리[m]/방위각[rad]
         self._yaw_flash_until = 0.0         # 하단 흰 선 플래시 종료시각(0점 지정)
         self._yaw_limit_until = 0.0         # 하단 빨간 선 종료시각(케이블 한계 근접)
+        self._compose_active = False        # 촬영구도 자동 기동 중(하단 굵은 파란선)
 
         self.create_subscription(String, "/gesture_ui", self._ui_cb, 10)
         self.create_subscription(Int32, "/control_mode", self._mode_cb, 10)
@@ -91,6 +92,7 @@ class UiNode(Node):
         self.create_subscription(ControlDebug, "/control_debug", self._debug_cb, 10)
         self.create_subscription(Empty, "/yaw_set_zero", self._yaw_zero_cb, 10)
         self.create_subscription(Empty, "/yaw_limit_warn", self._yaw_limit_cb, 10)
+        self.create_subscription(Bool, "/compose_active", self._compose_cb, 10)
         self.create_subscription(
             Image, str(self.get_parameter("video_topic").value), self._phone_img_cb,
             qos_profile_sensor_data)
@@ -188,6 +190,10 @@ class UiNode(Node):
     def _yaw_limit_cb(self, _msg):
         # 상단yaw 케이블 한계 근접 → 하단 빨간 선 2s.
         self._yaw_limit_until = time.time() + 2.0
+
+    def _compose_cb(self, msg):
+        # 촬영구도 프리셋 선택 후 자동 자전+OAK재정렬 진행중 → 하단 굵은 파란선 ON/OFF.
+        self._compose_active = bool(msg.data)
 
     # ----- 녹화(REC) → 파일 -----
     def _resolve_output_dir(self, param_val):
@@ -375,11 +381,14 @@ class UiNode(Node):
         self.screen.blit(self.kfont.render(tgt, True, (110, 170, 245)), (12, h - 24))
 
     def _draw_yaw_flash(self):
-        # 하단 얇은 선: 빨강=케이블 한계 근접(2s, 우선) / 흰색=0점 지정(0.3s).
+        # 하단 선: 파랑(굵게)=촬영구도 자동 기동중(최우선) / 빨강=케이블 한계 근접(2s)
+        #          / 흰색=0점 지정(0.3s).
         pg = self.pygame
         w, h = self.screen.get_size()
         now = time.time()
-        if now < self._yaw_limit_until:
+        if self._compose_active:
+            pg.draw.rect(self.screen, (40, 120, 255), (0, h - 8, w, 8))  # 굵은 파랑: 자동 수행중
+        elif now < self._yaw_limit_until:
             pg.draw.rect(self.screen, (255, 0, 0), (0, h - 4, w, 4))   # 빨강(RGB): 케이블 한계
         elif now < self._yaw_flash_until:
             pg.draw.rect(self.screen, (255, 255, 255), (0, h - 3, w, 3))

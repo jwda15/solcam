@@ -253,7 +253,10 @@ class Hud:
         self._hint(scr, w, h, "reverse thumbs-up to go back")
 
     def _dir_card(self, scr, rect, gesture, label, col):
-        g = self.f_sym.render(GSYM.get(gesture, "?"), True, col)
+        # 글리프(방향) 우선, 없으면 손가락 개수 숫자(1~4). 둘 다 없을 때만 '?'.
+        #  Wheel/More 처럼 방향(p_*)+숫자(one~four)가 섞인 메뉴에서 숫자가 ?로 뜨던 버그 수정.
+        sym = GSYM.get(gesture) or GESTURE_NUM.get(gesture, "?")
+        g = self.f_sym.render(sym, True, col)
         scr.blit(g, (rect.x + (rect.w - g.get_width()) // 2, rect.y + 8))
         s = self.f_small.render(label, True, col)
         scr.blit(s, (rect.x + (rect.w - s.get_width()) // 2, rect.y + rect.h - 24))

@@ -149,6 +149,26 @@ def test_wheel_more_compose_presets():
         assert a.kind == "yaw" and a.payload["deg"] == deg
 
 
+# ---------- 자전(Spin) 후 Wheel 나갈 때 각도확정(AngleSet) 등장 ----------
+def test_wheel_spin_exit_shows_angleset():
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)    # Wheel
+    feed(sm, "gun_left", t, 1.6); t += 1.7                      # 자전 CW(BODY_WZ)
+    feed(sm, None, t, 0.2); t += 0.3
+    feed(sm, "dislike", t, 1.6); t += 1.7                       # 역따봉으로 나감
+    assert sm.state == "MENU" and sm.path[-1].label == "AngleSet"
+    feed(sm, None, t, 0.2); t += 0.3
+    a = [e for e in feed(sm, "one", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.kind == "yaw" and a.payload["deg"] == 0           # Front 선택
+    assert sm.state == "IDLE"                                   # 선택 후 닫힘
+
+
+def test_wheel_exit_without_spin_no_angleset():
+    # 자전 안 썼으면 Wheel 역따봉 → AngleSet 안 뜨고 상위(root)로 정상 복귀
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
+    feed(sm, "dislike", t, 1.6)
+    assert sm.path[-1].label != "AngleSet" and len(sm.path) == 1
+
+
 # ---------- 리프트: 방향(권총) ----------
 def test_lift_directions():
     sm = make_sm()

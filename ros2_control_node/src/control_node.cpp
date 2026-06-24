@@ -51,6 +51,8 @@ ControlNode::ControlNode()
     "/control_debug", 10);   // 튜닝/모니터링용 (드라이버는 사용 안 함)
   yaw_warn_pub_ = this->create_publisher<std_msgs::msg::Empty>(
     "/yaw_limit_warn", 10);  // 상단yaw 케이블 한계 근접 → UI 하단 빨간선
+  compose_pub_ = this->create_publisher<std_msgs::msg::Bool>(
+    "/compose_active", 10);  // 촬영구도 자동 기동 중 → UI 하단 굵은 파란선
 
   // ----- 구독 -----
   owner_sub_ = this->create_subscription<ros2_tracking_node::msg::OwnerPose>(
@@ -381,9 +383,14 @@ void ControlNode::yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr ms
   double off = wrapAngle(static_cast<double>(msg->data));
   adjust_.heading_offset = off;          // 몸체 헤딩 목표 = 주인방위 + off (구도 유지)
   yaw_warn_latched_ = false;
+  // 구도 기동 시작: 몸체가 |off| 만큼 도는 데 걸리는 시간(추정) + 정착 2s 동안 주행 보류.
+  double w = std::max(0.05, params_.w_body_max);
+  double rot_time = std::abs(off) / w * 1.3;     // PD 수렴 여유 30%
+  compose_until_ = this->now() + rclcpp::Duration::from_seconds(rot_time + 2.0);
+  compose_active_ = true;
   RCLCPP_INFO(this->get_logger(),
-    "촬영구도: off=%.0f° → heading_offset 설정. OAK가 주인 재정렬→theta_head≈%.0f° 수렴",
-    off * 180.0 / M_PI, -off * 180.0 / M_PI);
+    "촬영구도: off=%.0f° → heading_offset 설정. 자전+OAK재정렬 약 %.1fs 후 주행재개 "
+    "(theta_head≈%.0f° 수렴)", off * 180.0 / M_PI, rot_time + 2.0, -off * 180.0 / M_PI);
 }
 
 // 손동작 조정 명령 라우팅 (AdjustCmd.msg 의 param 상수 참조).
@@ -611,6 +618,24 @@ void ControlNode::controlStep()
   // 5.5) 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운 (상단yaw 명령 후처리).
   //   각도가 아닌 명령시간으로 제어하므로 현재각을 여기서 적분·판정한다.
   applyTopYawGuard(cmd, dt, in.owner.distance, in.owner.azimuth, in.owner.is_detected);
+
+  // 5.6) 촬영구도 기동: 프리셋(Front/Right/Back/Left) 선택 직후엔 몸체가 새 구도로
+  //   자전하고 OAK 가 주인을 재정렬할 때까지(회전시간 추정 + 정착 2s) 주행(평면이동)을
+  //   보류한다 — 그래야 자동 회전과 주행 명령이 겹치지 않음. 자전/상단yaw 만 허용.
+  {
+    rclcpp::Time now = this->now();
+    bool active = compose_active_ && now < compose_until_;
+    if (compose_active_ && !active) compose_active_ = false;   // 기동 종료
+    if (active) {
+      cmd.body_vx = 0.0;          // 주행 보류
+      cmd.body_vy = 0.0;
+    }
+    if (active != compose_pub_last_) {
+      std_msgs::msg::Bool m; m.data = active;
+      compose_pub_->publish(m);   // UI: 하단 굵은 파란선 on/off
+      compose_pub_last_ = active;
+    }
+  }
 
   // 6) 장애물 회피: 몸체 속도만 깎음(목표는 불변 → 회피 후 자연 복귀)
   if (obstacle_params_.enabled) {
