@@ -75,7 +75,8 @@ class UiNode(Node):
         self._have_debug = False
         self.cur_dist = self.cur_az = 0.0   # 현재 주인 거리[m]/방위각[rad]
         self.tgt_dist = self.tgt_az = 0.0   # 타겟 거리[m]/방위각[rad]
-        self._yaw_flash_until = 0.0         # 하단 흰 선 플래시 종료시각
+        self._yaw_flash_until = 0.0         # 하단 흰 선 플래시 종료시각(0점 지정)
+        self._yaw_limit_until = 0.0         # 하단 빨간 선 종료시각(케이블 한계 근접)
 
         self.create_subscription(String, "/gesture_ui", self._ui_cb, 10)
         self.create_subscription(Int32, "/control_mode", self._mode_cb, 10)
@@ -85,6 +86,7 @@ class UiNode(Node):
         self.create_subscription(Float32, "/phone/zoom", self._zoom_cb, 10)
         self.create_subscription(ControlDebug, "/control_debug", self._debug_cb, 10)
         self.create_subscription(Empty, "/yaw_set_zero", self._yaw_zero_cb, 10)
+        self.create_subscription(Empty, "/yaw_limit_warn", self._yaw_limit_cb, 10)
         self.create_subscription(
             Image, str(self.get_parameter("video_topic").value), self._phone_img_cb,
             qos_profile_sensor_data)
@@ -171,6 +173,10 @@ class UiNode(Node):
     def _yaw_zero_cb(self, _msg):
         # OAK 케이블 0점 지정 완료 → 하단 흰 선 0.3s 깜빡.
         self._yaw_flash_until = time.time() + 0.3
+
+    def _yaw_limit_cb(self, _msg):
+        # 상단yaw 케이블 한계 근접 → 하단 빨간 선 2s.
+        self._yaw_limit_until = time.time() + 2.0
 
     # ----- 녹화(REC) → 파일 -----
     def _resolve_output_dir(self, param_val):
@@ -324,12 +330,14 @@ class UiNode(Node):
         self.screen.blit(self.kfont.render(tgt, True, (110, 170, 245)), (12, h - 24))
 
     def _draw_yaw_flash(self):
-        # OAK 케이블 0점 지정 직후 0.3s 동안 화면 맨 하단에 얇은 흰 선 1줄.
-        if time.time() >= self._yaw_flash_until:
-            return
+        # 하단 얇은 선: 빨강=케이블 한계 근접(2s, 우선) / 흰색=0점 지정(0.3s).
         pg = self.pygame
         w, h = self.screen.get_size()
-        pg.draw.rect(self.screen, (255, 255, 255), (0, h - 3, w, 3))
+        now = time.time()
+        if now < self._yaw_limit_until:
+            pg.draw.rect(self.screen, (255, 0, 0), (0, h - 4, w, 4))   # 빨강(RGB): 케이블 한계
+        elif now < self._yaw_flash_until:
+            pg.draw.rect(self.screen, (255, 255, 255), (0, h - 3, w, 3))
 
     def _draw_teleop_status(self):
         # 키보드 주행 진단/안내(ASCII, 기본폰트). 포커스 있으면 실시간 vx/vy/wz,

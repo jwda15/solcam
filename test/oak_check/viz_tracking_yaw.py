@@ -39,8 +39,14 @@ except ImportError:
     sys.exit("depthai 필요: pip install depthai  (OAK-D 드라이버 포함)")
 
 # ---- control_node 와 일치 (params.hpp / control_params.yaml) ----
-AZ_DEAD = 0.10          # rad, 중앙 정지 불감대 (≈±5.7°)
+AZ_DEAD = 0.15          # rad, 중앙 정지 불감대 (≈±8.6°)
 TOP_YAW_SIGN = 1.0      # 회전 방향이 실제와 반대면 -1.0
+# 펄스 제어 + 시간기반 케이블 가드 (applyTopYawGuard 와 동일)
+YAW_PULSE_PERIOD = 0.5  # s, 펄스 간격
+YAW_PULSE_SEC    = 0.02 # s, 1회 펄스 길이
+YAW_TIME_LIMIT   = 0.16 # s, 누적 명령시간 하드 한계
+YAW_TIME_WARN    = 0.14 # s, 한계 근접 경고
+TOP_YAW_SPEED    = 11.22 # rad/s, 스테이지 속도(측정) — 누적시간→각 환산
 
 # ---- tracking_node.cpp 와 동일한 평활/외삽 파라미터 (/owner_pose 재현용) ----
 MAX_SPEED_MMPS = 2000.0   # ±2.0 m/s 속도 클립
@@ -157,10 +163,47 @@ def build_pipeline():
     return pipe, q_rgb, q_det
 
 
-def yaw_cmd_for(azimuth):
-    if abs(azimuth) <= AZ_DEAD:
-        return 0.0
-    return TOP_YAW_SIGN * (-1.0 if azimuth >= 0.0 else 1.0)
+class YawPulseSim:
+    """control_node applyTopYawGuard 의 펄스 + 시간 케이블가드를 그대로 재현(시각화용)."""
+    def __init__(self):
+        self.accum = 0.0          # 누적 명령시간[s] (signed). r키로 0 리셋(=rock_on)
+        self.pulse_until = 0.0
+        self.last_pulse = -999.0
+        self.pulse_dir = 0
+        self.blink_until = 0.0    # 펄스 발사 점멸 텍스트 종료
+        self.out = 0              # 이번 프레임 실제 명령 방향
+        self.warn = False
+        self.t = None
+
+    def reset(self):
+        self.accum = 0.0
+        self.warn = False
+
+    def update(self, az, alive, now):
+        dt = (now - self.t) if self.t else (1.0 / 30.0)
+        if dt <= 0.0 or dt > 1.0:
+            dt = 1.0 / 30.0
+        self.t = now
+        want = 0
+        if alive and abs(az) > AZ_DEAD:
+            want = int(TOP_YAW_SIGN * (-1 if az >= 0 else 1))
+        out = 0
+        if now < self.pulse_until:
+            out = self.pulse_dir
+        elif want != 0 and (now - self.last_pulse) >= YAW_PULSE_PERIOD:
+            self.pulse_dir = want
+            self.pulse_until = now + YAW_PULSE_SEC
+            self.last_pulse = now
+            self.blink_until = now + 0.25
+            out = want
+        if (out > 0 and self.accum >= YAW_TIME_LIMIT) or \
+           (out < 0 and self.accum <= -YAW_TIME_LIMIT):
+            out = 0                                # 케이블 한계 → 차단
+        if out != 0:
+            self.accum = max(-YAW_TIME_LIMIT, min(YAW_TIME_LIMIT, self.accum + out * dt))
+        self.warn = abs(self.accum) >= YAW_TIME_WARN
+        self.out = out
+        return out
 
 
 def pick_owner(persons):
@@ -174,7 +217,7 @@ def pick_owner(persons):
     return best
 
 
-def draw_tracking(frame, persons, owner_det, trk, now):
+def draw_tracking(frame, persons, owner_det, trk, yaw, now):
     f = cv2.resize(frame, (PREV_W * DISP_SCALE, PREV_H * DISP_SCALE))
     H, W = f.shape[:2]
     cv2.line(f, (W // 2, 0), (W // 2, H), (90, 90, 90), 1)
@@ -201,22 +244,31 @@ def draw_tracking(frame, persons, owner_det, trk, now):
         cv2.putText(f, f"KF extrap {trk.lost_secs(now):.1f}s", (ex + 10, ey),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
 
-    # 상단 yaw 텍스트 (control 과 동일하게 smoothed azimuth 사용)
+    # 상단 yaw 텍스트 — 펄스 제어값(누적 명령시간 / 케이블 한계) 시각화
+    deg = math.degrees(yaw.accum * TOP_YAW_SPEED)         # 누적 명령시간→대략 스테이지각
     if trk.alive:
         az = math.atan2(trk.sx, trk.sz)
-        cmd = yaw_cmd_for(az)
-        side = "CENTER" if cmd == 0 else ("RIGHT" if cmd < 0 else "LEFT")
+        side = "CENTER" if abs(az) <= AZ_DEAD else ("RIGHT" if az >= 0 else "LEFT")
         state = "EXTRAP(KF)" if trk.extrap else "TRACK"
         lines = [
-            f"TOP-YAW (velocity) [{state}]",
-            f"azimuth(smoothed) = {math.degrees(az):+.1f} deg  (deadzone +-{math.degrees(AZ_DEAD):.1f})",
-            f"owner = {side}",
-            f"published top_yaw_target = {cmd:+.1f}  active=True",
+            f"TOP-YAW (pulse) [{state}]",
+            f"azimuth = {math.degrees(az):+.1f} deg  (deadzone +-{math.degrees(AZ_DEAD):.1f})  owner={side}",
+            f"accum cmd-time = {yaw.accum:+.3f}s / +-{YAW_TIME_LIMIT:.2f}  (~{deg:+.0f} deg)",
         ]
-        col = (0, 165, 255) if trk.extrap else ((0, 255, 255) if cmd != 0 else (0, 220, 0))
+        col = (0, 165, 255) if trk.extrap else (0, 220, 0)
     else:
-        lines = ["TOP-YAW (velocity)", "no owner -> top_yaw_target = 0.0 (stop)"]
+        lines = ["TOP-YAW (pulse)", "no owner -> stop",
+                 f"accum cmd-time = {yaw.accum:+.3f}s"]
         col = (0, 0, 255)
+    # 펄스 발사 점멸
+    if now < yaw.blink_until:
+        arrow = "RIGHT >>" if yaw.pulse_dir < 0 else "<< LEFT"
+        lines.append(f"** PULSE {arrow} ({YAW_PULSE_SEC*1000:.0f}ms) **")
+    # 케이블 한계 근접/도달
+    if yaw.warn:
+        lines.append("!! CABLE LIMIT NEAR (red line) !!")
+        col = (0, 0, 255)
+    lines.append("[r]=reset zero (rock_on)")
     y = 26
     for ln in lines:
         cv2.putText(f, ln, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
@@ -277,6 +329,7 @@ def main():
     frame = np.zeros((PREV_H, PREV_W, 3), dtype=np.uint8)
     persons, owner_det = [], None
     trk = OwnerTracker()
+    yaw = YawPulseSim()
     try:
         while pipe.isRunning():
             in_rgb = q_rgb.tryGet()
@@ -307,10 +360,16 @@ def main():
                     trk.miss(now)
 
             now = time.time()
-            cv2.imshow("OAK Tracking", draw_tracking(frame, persons, owner_det, trk, now))
+            az = math.atan2(trk.sx, trk.sz) if trk.alive else 0.0
+            yaw.update(az, trk.alive, now)     # 펄스 제어 시뮬(누적/한계 갱신)
+
+            cv2.imshow("OAK Tracking", draw_tracking(frame, persons, owner_det, trk, yaw, now))
             cv2.imshow("2D Map", draw_map(owner_det, trk, now))
-            if (cv2.waitKey(1) & 0xFF) in (ord('q'), 27):
+            k = cv2.waitKey(1) & 0xFF
+            if k in (ord('q'), 27):
                 break
+            if k == ord('r'):                  # rock_on 0점 지정 시뮬
+                yaw.reset()
     finally:
         try:
             pipe.stop()

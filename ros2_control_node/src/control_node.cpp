@@ -17,6 +17,7 @@
 // ============================================================================
 #include "control_node/control_node.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <vector>
@@ -48,6 +49,8 @@ ControlNode::ControlNode()
     "/control_cmd", 10);
   debug_pub_ = this->create_publisher<ros2_control_node::msg::ControlDebug>(
     "/control_debug", 10);   // 튜닝/모니터링용 (드라이버는 사용 안 함)
+  yaw_warn_pub_ = this->create_publisher<std_msgs::msg::Empty>(
+    "/yaw_limit_warn", 10);  // 상단yaw 케이블 한계 근접 → UI 하단 빨간선
 
   // ----- 구독 -----
   owner_sub_ = this->create_subscription<ros2_tracking_node::msg::OwnerPose>(
@@ -86,6 +89,8 @@ ControlNode::ControlNode()
   last_wheel_cmd_time_ = this->now();
   last_jog_time_ = this->now() - rclcpp::Duration::from_seconds(10.0);  // 시작 시 jog 비활성
   yaw_zero_block_until_ = this->now();   // 시작 시점=쿨다운 없음
+  yaw_pulse_until_      = this->now();
+  yaw_last_pulse_       = this->now();
 
   RCLCPP_INFO(this->get_logger(),
     "control_node 시작. rate=%.0fHz, mode=%d, seg_D=%.2fm, 회피=%s",
@@ -114,6 +119,11 @@ void ControlNode::declareParams()
   this->declare_parameter("top_yaw_limit_pos", c.top_yaw_limit_pos);
   this->declare_parameter("top_yaw_limit_neg", c.top_yaw_limit_neg);
   this->declare_parameter("top_yaw_speed",     c.top_yaw_speed);
+  this->declare_parameter("yaw_pulse_mode",    c.yaw_pulse_mode);
+  this->declare_parameter("yaw_pulse_period",  c.yaw_pulse_period);
+  this->declare_parameter("yaw_pulse_sec",     c.yaw_pulse_sec);
+  this->declare_parameter("yaw_time_limit",    c.yaw_time_limit);
+  this->declare_parameter("yaw_time_warn",     c.yaw_time_warn);
 
   // 몸체 위치 (선분 끝점 추종, PD)
   this->declare_parameter("kp_pos",   c.kp_pos);
@@ -183,6 +193,11 @@ void ControlNode::loadParams()
   params_.top_yaw_limit_pos = this->get_parameter("top_yaw_limit_pos").as_double();
   params_.top_yaw_limit_neg = this->get_parameter("top_yaw_limit_neg").as_double();
   params_.top_yaw_speed     = this->get_parameter("top_yaw_speed").as_double();
+  params_.yaw_pulse_mode    = this->get_parameter("yaw_pulse_mode").as_bool();
+  params_.yaw_pulse_period  = this->get_parameter("yaw_pulse_period").as_double();
+  params_.yaw_pulse_sec     = this->get_parameter("yaw_pulse_sec").as_double();
+  params_.yaw_time_limit    = this->get_parameter("yaw_time_limit").as_double();
+  params_.yaw_time_warn     = this->get_parameter("yaw_time_warn").as_double();
 
   params_.kp_pos   = this->get_parameter("kp_pos").as_double();
   params_.kd_pos   = this->get_parameter("kd_pos").as_double();
@@ -313,10 +328,12 @@ void ControlNode::gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg
 void ControlNode::yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr)
 {
   head_angle_ = 0.0;
+  yaw_time_accum_ = 0.0;          // ★누적 명령시간 0 (케이블 풀린 지금=0점)
+  yaw_warn_latched_ = false;
   yaw_zero_block_until_ =
     this->now() + rclcpp::Duration::from_seconds(node_params_.yaw_zero_cooldown);
   RCLCPP_INFO(this->get_logger(),
-    "OAK 0점 지정: 데드레코닝각=0, %.1fs 정지", node_params_.yaw_zero_cooldown);
+    "OAK 0점 지정: 누적명령시간=0, %.1fs 정지", node_params_.yaw_zero_cooldown);
 }
 
 // 손동작 조정 명령 라우팅 (AdjustCmd.msg 의 param 상수 참조).
@@ -612,36 +629,73 @@ void ControlNode::publishDebug(const ControlCommand & cmd, const ControlInput & 
   debug_pub_->publish(d);
 }
 
-// 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운.
-//  velocity 모드: cmd.top_yaw_target 부호=회전방향, 0=정지. 현재각 피드백이
-//  없으므로 명령부호×top_yaw_speed×dt 를 적분해 head_angle_ 를 추정한다.
+// 상단 yaw 펄스 제어 + 시간기반 케이블 가드.
+//  trackTopYaw 가 준 "원하는 방향"(cmd.top_yaw_target 부호, 데드존 적용됨)을 받아,
+//  연속이 아니라 yaw_pulse_period 마다 yaw_pulse_sec 동안만 톡 보낸다(모터가 거칠어서).
+//  보낸 "명령 시간"을 방향별로 누적(yaw_time_accum_)해 ±yaw_time_limit 넘으면 차단(케이블).
+//  head_angle_ = 누적시간×속도 로 스테이지각을 추정(StateEstimator 용).
 void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt)
 {
+  rclcpp::Time now = this->now();
+
   // 0점 지정 직후 쿨다운: 상단yaw 완전 정지(케이블이 풀린 상태 그대로 유지).
-  if (this->now() < yaw_zero_block_until_) {
+  if (now < yaw_zero_block_until_) {
     cmd.top_yaw_target = 0.0;
     cmd.top_yaw_active = false;
+    head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;
     return;
   }
 
-  bool moving = cmd.top_yaw_active && std::abs(cmd.top_yaw_target) > 1e-6;
-  if (!moving) { return; }
+  // trackTopYaw 결과 = 원하는 회전 방향(+1/-1/0). top_yaw_sign 은 이미 반영됨.
+  int want = (cmd.top_yaw_target > 1e-6) ? 1 : (cmd.top_yaw_target < -1e-6 ? -1 : 0);
 
-  double dir = (cmd.top_yaw_target > 0.0) ? 1.0 : -1.0;   // 보낼 명령의 회전 방향
-  // ±한계 방어: 이 방향으로 더 돌면 한계를 넘는 경우 정지(OAK 케이블 보호).
-  //  (head_angle_ 부호는 "보내는 명령부호" 기준 — 한계가 대칭이라 좌우 일관).
-  if ((dir > 0.0 && head_angle_ >=  params_.top_yaw_limit_pos) ||
-      (dir < 0.0 && head_angle_ <= -params_.top_yaw_limit_neg)) {
-    cmd.top_yaw_target = 0.0;   // velocity 모드: 0=정지
+  int out_dir = 0;
+  if (params_.yaw_pulse_mode) {
+    if (now < yaw_pulse_until_) {
+      out_dir = yaw_pulse_dir_;                 // 진행 중인 펄스 유지
+    } else if (want != 0 &&
+               (now - yaw_last_pulse_).seconds() >= params_.yaw_pulse_period) {
+      yaw_pulse_dir_   = want;                  // 새 펄스 시작
+      yaw_pulse_until_ = now + rclcpp::Duration::from_seconds(params_.yaw_pulse_sec);
+      yaw_last_pulse_  = now;
+      out_dir = want;
+    } else {
+      out_dir = 0;                              // 펄스 사이 = 정지
+    }
+  } else {
+    out_dir = want;                             // 연속(구 동작)
+  }
+
+  // ±시간 한계 케이블 가드: 그 방향으로 더 누적되면 차단.
+  if ((out_dir > 0 && yaw_time_accum_ >=  params_.yaw_time_limit) ||
+      (out_dir < 0 && yaw_time_accum_ <= -params_.yaw_time_limit)) {
+    out_dir = 0;
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-      "상단yaw 한계(+%.1f°/-%.1f°) 도달 → 정지(케이블 보호)",
-      params_.top_yaw_limit_pos * 180.0 / M_PI, params_.top_yaw_limit_neg * 180.0 / M_PI);
-    return;
+      "상단yaw 누적 명령시간 한계(±%.2fs) 도달 → 정지(케이블 보호)", params_.yaw_time_limit);
   }
-  // 한계 안: 명령시간만큼 각도 적분(다음 스텝 한계판정 기준).
-  head_angle_ += dir * params_.top_yaw_speed * dt;
-  if (head_angle_ >  params_.top_yaw_limit_pos) { head_angle_ =  params_.top_yaw_limit_pos; }
-  if (head_angle_ < -params_.top_yaw_limit_neg) { head_angle_ = -params_.top_yaw_limit_neg; }
+
+  if (out_dir != 0) {
+    cmd.top_yaw_target = static_cast<double>(out_dir);
+    cmd.top_yaw_active = true;
+    yaw_time_accum_ += out_dir * dt;            // 실제 보낸 명령시간 누적
+    yaw_time_accum_ = std::clamp(yaw_time_accum_,
+                                 -params_.yaw_time_limit, params_.yaw_time_limit);
+  } else {
+    cmd.top_yaw_target = 0.0;
+    cmd.top_yaw_active = false;
+  }
+
+  // 한계 근접(±yaw_time_warn) → UI 빨간선 1회 발행(되돌아오면 다시 무장).
+  if (std::abs(yaw_time_accum_) >= params_.yaw_time_warn) {
+    if (!yaw_warn_latched_) {
+      yaw_warn_pub_->publish(std_msgs::msg::Empty());
+      yaw_warn_latched_ = true;
+    }
+  } else {
+    yaw_warn_latched_ = false;
+  }
+
+  head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 추정용 스테이지각
 }
 
 // 현재 모드가 유지하려는 목표 거리[m] (UI/디버그 표시용).

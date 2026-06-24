@@ -98,6 +98,12 @@ private:
   double      head_angle_ = 0.0;     // ★데드레코닝 상단yaw 현재각[rad] (0=부팅/0점지정).
                                      //  제어/추정/한계판정의 실제 기준값.
   rclcpp::Time yaw_zero_block_until_; // 이 시각까지 상단yaw 정지(0점 지정 쿨다운)
+  // ----- 상단 yaw 펄스 제어 + 시간기반 케이블 가드 상태 -----
+  double       yaw_time_accum_ = 0.0; // 한 방향 누적 명령시간[s] (0=부팅/0점지정). 가드 기준
+  rclcpp::Time yaw_pulse_until_;      // 현재 펄스가 이 시각까지 active
+  rclcpp::Time yaw_last_pulse_;       // 마지막 펄스 시작 시각(주기 판정)
+  int          yaw_pulse_dir_ = 0;    // 현재 펄스 방향(+1/-1)
+  bool         yaw_warn_latched_ = false;  // 한계근접 경고 1회 발행 디바운스
   double      odom_wz_ = 0.0;        // 오도메트리 측정 몸체 yaw rate [rad/s]
   double      prev_theta_head_ = 0.0;    // 상단 yaw 속도 추정용 직전값
   bool        have_prev_theta_ = false;
@@ -129,6 +135,7 @@ private:
   // ----- ROS 인터페이스 -----
   rclcpp::Publisher<ros2_control_node::msg::ControlCmd>::SharedPtr cmd_pub_;
   rclcpp::Publisher<ros2_control_node::msg::ControlDebug>::SharedPtr debug_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr yaw_warn_pub_;  // 한계근접→UI 빨간선
   rclcpp::Subscription<ros2_tracking_node::msg::OwnerPose>::SharedPtr owner_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr teleop_sub_;
