@@ -116,6 +116,7 @@ private:
   double      pub_vx_ = 0.0, pub_vy_ = 0.0, pub_wz_ = 0.0;  // 직전 발행 몸체속도(estop 감속 시드)
   double      teleop_vx_ = 0.0, teleop_vy_ = 0.0, teleop_wz_ = 0.0;  // 키보드 teleop
   double      jog_vx_ = 0.0, jog_vy_ = 0.0, jog_wz_ = 0.0;  // Wheel 로봇기준 jog(모든 모드)
+  double      jog_orbit_ = 0.0, jog_radial_ = 0.0;  // Wheel 주인기준 jog(접선/반경, 모든 모드)
   rclcpp::Time last_owner_time_;
   rclcpp::Time last_teleop_time_;
   rclcpp::Time last_odom_time_;

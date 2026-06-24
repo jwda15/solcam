@@ -8,7 +8,8 @@ from ros2_gesture_node.menu import MenuStateMachine, build_menu
 
 STEPS = {"dist_step": 0.3, "seg_angle_step": math.radians(8.0),
          "heading_step": math.radians(15.0), "lift_step": 0.1,
-         "jog_lin": 0.12, "jog_ang": 0.6}
+         "jog_lin": 0.12, "jog_ang": 0.6,
+         "radial_jog": 0.12, "orbit_jog": 0.12}
 
 
 def make_sm():
@@ -137,10 +138,10 @@ def test_wheel_more_old_commands():
     t = nav(sm, "two", t)                                      # More (V 자리)
     assert sm.path[-1].label == "More"
     a = [e for e in feed(sm, "p_left", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["param"] == "SEG_ANGLE" and a.payload["value"] > 0   # 공전
+    assert a.payload["param"] == "ORBIT_JOG" and a.payload["value"] > 0   # 공전 CCW(+)
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t); t = nav(sm, "two", t)
     a = [e for e in feed(sm, "p_up", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["param"] == "SEG_DISTANCE" and a.payload["value"] > 0  # 거리
+    assert a.payload["param"] == "RADIAL_JOG" and a.payload["value"] < 0  # Farther(멀어짐,−)
 
 
 def test_wheel_more_face_owner_reset():

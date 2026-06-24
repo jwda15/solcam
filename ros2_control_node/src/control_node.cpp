@@ -377,7 +377,9 @@ void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
       msg->param == AdjustCmd::PARAM_HEADING_OFFSET ||
       msg->param == AdjustCmd::PARAM_BODY_VX ||
       msg->param == AdjustCmd::PARAM_BODY_VY ||
-      msg->param == AdjustCmd::PARAM_BODY_WZ) {
+      msg->param == AdjustCmd::PARAM_BODY_WZ ||
+      msg->param == AdjustCmd::PARAM_RADIAL_JOG ||
+      msg->param == AdjustCmd::PARAM_ORBIT_JOG) {
     last_wheel_cmd_time_ = this->now();
   }
 
@@ -402,14 +404,27 @@ void ControlNode::adjustCallback(const AdjustCmd::SharedPtr msg)
       break;
     case AdjustCmd::PARAM_BODY_VX:   // Wheel 로봇기준 전후 jog (단일축; 나머지 0)
       jog_vx_ = msg->value; jog_vy_ = 0.0; jog_wz_ = 0.0;
+      jog_orbit_ = 0.0; jog_radial_ = 0.0;
       last_jog_time_ = this->now();
       break;
     case AdjustCmd::PARAM_BODY_VY:   // Wheel 로봇기준 좌우 jog
       jog_vy_ = msg->value; jog_vx_ = 0.0; jog_wz_ = 0.0;
+      jog_orbit_ = 0.0; jog_radial_ = 0.0;
       last_jog_time_ = this->now();
       break;
     case AdjustCmd::PARAM_BODY_WZ:   // Wheel 로봇기준 자전 jog
       jog_wz_ = msg->value; jog_vx_ = 0.0; jog_vy_ = 0.0;
+      jog_orbit_ = 0.0; jog_radial_ = 0.0;
+      last_jog_time_ = this->now();
+      break;
+    case AdjustCmd::PARAM_RADIAL_JOG:  // 주인기준 거리 jog(+접근/−멀어짐) — 전 모드
+      jog_radial_ = msg->value; jog_orbit_ = 0.0;
+      jog_vx_ = jog_vy_ = jog_wz_ = 0.0;
+      last_jog_time_ = this->now();
+      break;
+    case AdjustCmd::PARAM_ORBIT_JOG:   // 주인기준 공전 jog(+CCW) — 전 모드
+      jog_orbit_ = msg->value; jog_radial_ = 0.0;
+      jog_vx_ = jog_vy_ = jog_wz_ = 0.0;
       last_jog_time_ = this->now();
       break;
     default:
@@ -555,9 +570,22 @@ void ControlNode::controlStep()
   //   메뉴를 나가면 gestureActiveCallback 가 engaged_=false → 모드가 새 거리/방향 재캡처.
   if (gesture_active_ &&
       (now - last_jog_time_).seconds() < node_params_.wheel_cmd_timeout) {
-    cmd.body_vx = jog_vx_;
-    cmd.body_vy = jog_vy_;
-    cmd.body_yaw_rate = jog_wz_;
+    if (jog_orbit_ != 0.0 || jog_radial_ != 0.0) {
+      // ★주인기준 jog: 주인 보일 때만. 몸체프레임 주인방향 dir = theta_head - azimuth.
+      //   반경(+=접근) = +dir 단위, 접선(+=CCW) = dir 수직. yaw 는 건드리지 않음.
+      if (in.owner.is_detected) {
+        double dir = wrapAngle(in.theta_head - in.owner.azimuth);
+        double c = std::cos(dir), s = std::sin(dir);
+        cmd.body_vx = jog_radial_ * c - jog_orbit_ * s;   // 전방(+x)
+        cmd.body_vy = jog_radial_ * s + jog_orbit_ * c;   // 좌(+y)
+        cmd.body_yaw_rate = 0.0;
+      }
+      // 주인 미검출이면 모드 출력 유지(주인기준 운동 불가)
+    } else {
+      cmd.body_vx = jog_vx_;        // 로봇기준 jog
+      cmd.body_vy = jog_vy_;
+      cmd.body_yaw_rate = jog_wz_;
+    }
   }
 
   // 5.5) 상단 yaw 데드레코닝 + ±한계 방어 + 0점 쿨다운 (상단yaw 명령 후처리).

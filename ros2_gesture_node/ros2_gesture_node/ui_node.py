@@ -317,8 +317,7 @@ class UiNode(Node):
                       oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
         if self.mode_select:
             self._draw_mode_overlay()
-        elif self.teleop_on:
-            self._draw_teleop_status()   # 포커스 상태 + 키 입력값(진단/안내)
+        # (키보드 안내/상태 오버레이는 거추장스러워 제거 — 키 입력은 그대로 동작)
         self._draw_tuning_text()         # 좌하단 현재/타겟 거리·방위각
         self._draw_yaw_flash()           # 하단 OAK 0점 지정 흰 선 플래시
         pg.display.flip()

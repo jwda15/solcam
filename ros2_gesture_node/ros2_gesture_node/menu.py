@@ -85,6 +85,8 @@ def build_menu(p: dict) -> MenuNode:
     dl = p["lift_step"]           # 리프트 1스텝 (m, +올림)
     jl = p["jog_lin"]            # 휠 jog 전후/좌우 속도 (m/s, 로봇기준)
     ja = p["jog_ang"]            # 휠 jog 자전 각속도 (rad/s, 로봇기준)
+    jr = p["radial_jog"]         # 주인기준 거리 jog (m/s, +=접근)
+    jo = p["orbit_jog"]          # 주인기준 공전 jog (m/s, +=CCW)
 
     def adj(name, param, value, delta=True, stay=True):
         return MenuNode(name, action=Action(
@@ -113,13 +115,14 @@ def build_menu(p: dict) -> MenuNode:
             "p_right": adj("Right",    "BODY_VY", -jl, delta=False),  # 우 = 우측면
             "gun_left":  adj("Spin CW",  "BODY_WZ", -ja, delta=False),  # 좌 = 시계 자전
             "gun_right": adj("Spin CCW", "BODY_WZ", +ja, delta=False),  # 우 = 반시계 자전
-            # V(two) → More: 이전 odom 기반 구도 조정(거리/공전/헤딩오프셋/리셋)
+            # V(two) → More: ★주인기준 모션 jog(공전/거리) — 모든 모드에서 동작.
+            #   목표값 조정이 아니라 "도는/다가가는 운동" 자체. 손 떼면 정지, 메뉴 나가면 재engage.
             "two": MenuNode("More", children={
-                "p_left":  adj("Orbit CCW",  "SEG_ANGLE", +da),
-                "p_right": adj("Orbit CW",   "SEG_ANGLE", -da),
-                "p_up":    adj("Farther",    "SEG_DISTANCE", +dd),
-                "p_down":  adj("Closer",     "SEG_DISTANCE", -dd),
-                "gun_left":  adj("Pan L", "HEADING_OFFSET", +dh),
+                "p_left":  adj("Orbit CCW", "ORBIT_JOG",  +jo, delta=False),  # 주인 둘레 반시계
+                "p_right": adj("Orbit CW",  "ORBIT_JOG",  -jo, delta=False),  # 시계
+                "p_up":    adj("Farther",   "RADIAL_JOG", -jr, delta=False),  # 멀어짐(− 접근)
+                "p_down":  adj("Closer",    "RADIAL_JOG", +jr, delta=False),  # 접근(+)
+                "gun_left":  adj("Pan L", "HEADING_OFFSET", +dh),  # 헤딩 오프셋(구도, 유지모드만)
                 "gun_right": adj("Pan R", "HEADING_OFFSET", -dh),
                 "two": adj("Face Owner", "HEADING_OFFSET", 0.0, delta=False, stay=False),
             }),
