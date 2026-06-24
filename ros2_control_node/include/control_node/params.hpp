@@ -68,7 +68,7 @@ struct ControllerParams
   //   접촉이 나빠, 연속추종 대신 "주기마다 짧게 한 번" 톡톡 돌린다.
   bool   yaw_pulse_mode   = true;    // true=펄스(권장) / false=연속(구 동작)
   double yaw_pulse_period = 0.5;     // s, 펄스 간격(이 주기마다 최대 1회)
-  double yaw_pulse_sec    = 0.02;    // s, 1회 펄스 길이(≈13°). 50Hz라 0.02=1틱이 실질 최소
+  double yaw_pulse_sec    = 0.06;    // s, 1회 펄스 길이 [0623 0.02→0.06: 0.02는 거의 안 돎]
   // ★OAK 케이블 꼬임 방어(데드레코닝, 시간기반): 시작/0점지정 후 한 방향으로 "준 명령
   //   시간"을 누적 → ±yaw_time_limit 초 넘으면 그 방향 추가명령 차단(정지). 각도 아님.
   //   0.16s≈103°(<120° 꼬임한계), 0.14s 근처서 UI 하단 빨간선 2s 경고.
@@ -84,7 +84,7 @@ struct ControllerParams
   double yaw_near_dist    = 1.0;     // m, 이 거리 이하 = "가까움"
   double yaw_far_dist     = 3.0;     // m, 이 거리 이상 = "멈"
   double yaw_period_near  = 3.0;     // s, 가까울 때 펄스 주기(길게=둔감)
-  double yaw_period_far   = 1.0;     // s, 멀 때 펄스 주기(짧게=민감)
+  double yaw_period_far   = 1.2;     // s, 멀 때 펄스 주기 [0623 1.0→1.2 조금 늦춤]
   double az_dead_near     = 0.35;    // rad, 가까울 때 데드존(≈20°, 크게)
   double az_dead_far      = 0.18;    // rad, 멀 때 데드존(≈10.3°, 작게)
 
