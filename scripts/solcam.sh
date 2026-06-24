@@ -55,7 +55,23 @@ stop() {
     rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
     echo "[stop] (graceful 무시한 잔존 강제종료 + shm 청소 완료)"
   fi
+  # 종료 시 Output 녹화영상을 폰으로 전송(adb 연결 시). 노드 종료 후라 mp4 마무리됨.
+  #  영상은 WiFi(IP Webcam)라도 adb 는 USB 또는 'adb connect' 필요. 미연결이면 건너뜀.
+  push_videos
   sleep 1; echo "[stop] 완료."
+}
+
+# Output/*.mp4 전부 폰으로 전송(타임스탬프 파일명이라 재전송해도 덮어쓰기=중복없음).
+push_videos() {
+  local out="$REPO/Output" dcim="${SOLCAM_PHONE_DCIM:-/sdcard/DCIM/solcam}"
+  ls "$out"/*.mp4 >/dev/null 2>&1 || { echo "[stop] 전송할 영상 없음($out)"; return; }
+  "$ADB_BIN" get-state >/dev/null 2>&1 || { echo "[stop] adb 미연결 → 영상 전송 건너뜀(영상은 $out 에 보존)"; return; }
+  echo "[stop] Output 영상 폰 전송(adb → $dcim)..."
+  "$ADB_BIN" shell mkdir -p "$dcim" >/dev/null 2>&1 || true
+  for f in "$out"/*.mp4; do
+    if "$ADB_BIN" push "$f" "$dcim/" >/dev/null 2>&1; then echo "   ✓ $(basename "$f")"
+    else echo "   ✗ $(basename "$f") (전송 실패)"; fi
+  done
 }
 
 clean() {

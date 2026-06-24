@@ -52,6 +52,9 @@ class PhoneBridge(Node):
         # ★video_url 설정 시: scrcpy/v4l2loopback 전부 건너뛰고 cv2 가 이 URL 을 직접 읽음.
         #  폰 'IP Webcam' 앱 등으로 띄운 MJPEG/RTSP. 예) http://192.168.0.5:8080/video
         self.declare_parameter("video_url", "")
+        # 자체 녹화(/tmp ffmpeg + 클립별 adb push) 사용 여부. 기본 false:
+        #  ui_node 가 Output/ 에 녹화하고 종료 시 solcam.sh 가 폰으로 전송하므로 중복 방지.
+        self.declare_parameter("record_to_file", False)
         self.declare_parameter("publish_rate", 20.0)           # /phone/image Hz
         self.declare_parameter("battery_period", 15.0)         # 배터리 폴링 s
         self.declare_parameter("adb_serial", "")               # 다중 기기 시 지정
@@ -76,6 +79,7 @@ class PhoneBridge(Node):
         self.mock = bool(gp("mock").value)
         self.video_device = str(gp("video_device").value)
         self.video_url = str(gp("video_url").value).strip()
+        self.record_to_file = bool(gp("record_to_file").value)
         self.publish_rate = float(gp("publish_rate").value)
         self.battery_period = float(gp("battery_period").value)
         self.adb_serial = str(gp("adb_serial").value)
@@ -514,6 +518,11 @@ class PhoneBridge(Node):
         self.pub_rec.publish(Bool(data=self.recording))
 
     def _toggle_record(self):
+        if not self.record_to_file:
+            # ui_node 가 Output/ 에 녹화하므로 여기선 상태만 토글(HUD 표시용). 자체 녹화/전송 안 함.
+            self.recording = not self.recording
+            self._publish_recording()
+            return
         if self.recording:
             self._stop_record()
         else:
@@ -554,6 +563,8 @@ class PhoneBridge(Node):
             self.rec_proc = None
 
     def _write_rec_frame(self, frame):
+        if not self.record_to_file:
+            return   # 자체 녹화 비활성(ui_node Output 사용)
         with self._rec_lock:
             if not self.recording:
                 return
