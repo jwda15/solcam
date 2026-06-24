@@ -69,6 +69,8 @@ ControlNode::ControlNode()
   yaw_zero_sub_ = this->create_subscription<std_msgs::msg::Empty>(
     "/yaw_set_zero", 10,
     std::bind(&ControlNode::yawSetZeroCallback, this, _1));
+  estop_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+    "/estop", 10, std::bind(&ControlNode::estopCallback, this, _1));
   adjust_sub_ = this->create_subscription<AdjustCmd>(
     "/adjust_cmd", 10, std::bind(&ControlNode::adjustCallback, this, _1));
   proximity_sub_ = this->create_subscription<ros2_control_node::msg::ProximityArray>(
@@ -337,6 +339,20 @@ void ControlNode::gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg
   }
 }
 
+// 긴급정지: 스페이스바 누르는 동안 true. 전 모드에서 휠·상단yaw·리프트 모두 정지.
+void ControlNode::estopCallback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+  if (estop_active_ != msg->data) {
+    estop_active_ = msg->data;
+    if (!estop_active_) {
+      engaged_ = false;   // 해제 시 재engage → 슬루 0에서 부드럽게 재출발(튐 방지)
+    }
+    RCLCPP_WARN(this->get_logger(),
+      estop_active_ ? "긴급정지(SPACE) → yaw/리프트 즉시·휠 감속"
+                    : "긴급정지 해제 → 주행 재개");
+  }
+}
+
 // rock_on(검지+새끼) 0.5s → OAK 케이블이 안전하게 풀린 "지금"을 0도로 지정.
 //  데드레코닝 현재각을 0으로 리셋하고, cooldown 동안 상단yaw 를 정지(꼬임 정리).
 void ControlNode::yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr)
@@ -421,6 +437,26 @@ void ControlNode::controlStep()
   rclcpp::Time now = this->now();
   double dt = guardDt((now - last_step_time_).seconds());
   last_step_time_ = now;
+
+  // 0) ★긴급정지(스페이스바): 상단yaw·리프트는 즉시 정지, 휠은 급정지 금지(미끄럼)
+  //    → 가속한계(슬루)로 0까지 부드럽게 감속. 컨트롤러 스텝은 건너뜀.
+  if (estop_active_) {
+    auto toward0 = [](double cur, double rate, double dt2) {
+      double step = rate * dt2;
+      if (cur >  step) { return cur - step; }
+      if (cur < -step) { return cur + step; }
+      return 0.0;
+    };
+    ControlCommand cmd;
+    cmd.body_vx       = toward0(pub_vx_, params_.body_accel_max, dt);  // 휠: 감속
+    cmd.body_vy       = toward0(pub_vy_, params_.body_accel_max, dt);
+    cmd.body_yaw_rate = toward0(pub_wz_, params_.yaw_accel_max,  dt);
+    cmd.lift_active    = false;   // 리프트: 즉시 현위치 정지
+    cmd.top_yaw_active = false;   // 상단yaw: 즉시 정지
+    cmd.top_yaw_target = 0.0;
+    publish(cmd);                 // publish 가 pub_vx_/vy_/wz_ 갱신(다음 틱 감속 이어짐)
+    return;
+  }
 
   // 1) 현재 모드의 제어기 선택. 없으면(IDLE/미구현) 정지.
   IController * ctrl = controllerFor(mode_);
@@ -603,6 +639,11 @@ void ControlNode::publish(const ControlCommand & cmd)
 {
   ControlCommand out = cmd;
   applySafetyLimits(out, params_.v_max, params_.w_body_max);
+
+  // estop 감속 시드용: 실제 발행되는 몸체속도(클램프 후)를 기억.
+  pub_vx_ = out.body_vx;
+  pub_vy_ = out.body_vy;
+  pub_wz_ = out.body_yaw_rate;
 
   ros2_control_node::msg::ControlCmd msg;
   msg.header.stamp = this->now();

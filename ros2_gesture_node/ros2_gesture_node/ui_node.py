@@ -109,6 +109,9 @@ class UiNode(Node):
         self.yaw_rate = float(self.get_parameter("yaw_rate").value)
         self.pub_teleop = self.create_publisher(Twist, "/teleop_cmd", 10)
         self.pub_mode_out = self.create_publisher(Int32, "/control_mode", 10)
+        # 긴급정지: 스페이스바 누르는 동안 전 모드에서 휠·상단yaw·리프트 정지(/estop).
+        self.pub_estop = self.create_publisher(Bool, "/estop", 10)
+        self._estop_state = False
         self.mode_select = False     # m 오버레이 상태
         self.last_key_mode = None    # 마지막으로 키로 바꾼 모드(표시용)
         self.cur_vx = self.cur_vy = self.cur_wz = 0.0
@@ -296,6 +299,8 @@ class UiNode(Node):
                     self._quit_ui(); return
                 if self.teleop_on and e.key == pg.K_m:
                     self.mode_select = True
+        # 긴급정지: 스페이스바 누르는 동안 전 모드 정지(/estop). 변할 때만 발행.
+        self._poll_estop()
         # 키보드 수동주행: 매 프레임 키 상태 폴링 → /teleop_cmd 발행(대각선 동시키 지원)
         if self.teleop_on and not self.mode_select:
             self._teleop_poll()
@@ -383,6 +388,16 @@ class UiNode(Node):
             self.get_logger().info("ESC → 전체 스택 정지(solcam.sh stop)")
         except Exception as e:
             self.get_logger().warn(f"전체 정지 실패({e}) — UI만 닫힘")
+
+    def _poll_estop(self):
+        # 스페이스바 누르는 동안 True 발행 → control_node 가 전 모드에서 즉시 정지.
+        #  (창 포커스 있을 때만 키 읽힘. 포커스 없으면 False=해제) 변할 때만 발행.
+        pg = self.pygame
+        focused = (not hasattr(pg.key, "get_focused")) or pg.key.get_focused()
+        estop = bool(focused and pg.key.get_pressed()[pg.K_SPACE])
+        if estop != self._estop_state:
+            self._estop_state = estop
+            self.pub_estop.publish(Bool(data=estop))
 
     # ----- 키보드 수동주행(teleop) -----
     def _teleop_poll(self):

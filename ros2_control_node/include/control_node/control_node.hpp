@@ -61,6 +61,7 @@ private:
   void modeCallback(const std_msgs::msg::Int32::SharedPtr msg);
   void gestureActiveCallback(const std_msgs::msg::Bool::SharedPtr msg);
   void yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr msg);
+  void estopCallback(const std_msgs::msg::Bool::SharedPtr msg);  // 스페이스바 긴급정지
   void adjustCallback(const ros2_control_node::msg::AdjustCmd::SharedPtr msg);
   void proximityCallback(const ros2_control_node::msg::ProximityArray::SharedPtr msg);
 
@@ -111,6 +112,8 @@ private:
   Vec2        owner_target_;             // 모드 확정(engage) 시 캡처한 주인 글로벌 타겟
   bool        owner_target_valid_ = false;  // 캡처 완료 여부(고정 타겟 사용)
   bool        gesture_active_ = false;   // 손동작 세션 중(몸체 일시정지)
+  bool        estop_active_ = false;      // ★스페이스바 긴급정지(상단yaw·리프트 즉시, 휠은 감속)
+  double      pub_vx_ = 0.0, pub_vy_ = 0.0, pub_wz_ = 0.0;  // 직전 발행 몸체속도(estop 감속 시드)
   double      teleop_vx_ = 0.0, teleop_vy_ = 0.0, teleop_wz_ = 0.0;  // 키보드 teleop
   double      jog_vx_ = 0.0, jog_vy_ = 0.0, jog_wz_ = 0.0;  // Wheel 로봇기준 jog(모든 모드)
   rclcpp::Time last_owner_time_;
@@ -143,6 +146,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr mode_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr gesture_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr yaw_zero_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr estop_sub_;
   rclcpp::Subscription<ros2_control_node::msg::AdjustCmd>::SharedPtr adjust_sub_;
   rclcpp::Subscription<ros2_control_node::msg::ProximityArray>::SharedPtr proximity_sub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
