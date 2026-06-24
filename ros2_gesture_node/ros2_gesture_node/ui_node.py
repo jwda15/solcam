@@ -99,7 +99,9 @@ class UiNode(Node):
         #    space 정지   m→숫자(0~5) 모드변경   esc 종료
         self.declare_parameter("teleop", True)     # 키보드 주행 on/off (개발 PC면 false 가능)
         self.declare_parameter("speed", 0.3)       # m/s, 평면 목표속도
-        self.declare_parameter("yaw_rate", 0.8)    # rad/s, 회전 목표속도
+        self.declare_parameter("yaw_rate", 0.4)    # rad/s, 회전 목표속도
+                                                   #  ★0.8→0.4: 회전이 직진보다 빨라 진동 심해서 낮춤.
+                                                   #   더 느리게=↓. (실차 한계는 control w_body_max 가 별도 클램프)
         self.teleop_on = bool(self.get_parameter("teleop").value)
         self.speed = float(self.get_parameter("speed").value)
         self.yaw_rate = float(self.get_parameter("yaw_rate").value)
