@@ -36,7 +36,7 @@ from ros2_control_node.msg import ControlDebug
 
 # 키보드 수동주행 모드 이름(오버레이 표시용). ASCII 영문만 — pygame 기본 폰트가
 # 한글/화살표 글리프가 없어 □로 깨지기 때문.
-MODE_NAMES = {0: "IDLE (manual)", 1: "FOLLOW", 2: "ROTATE",
+MODE_NAMES = {0: "IDLE", 1: "FOLLOW1", 2: "ROTATE",
               3: "FOLLOW2", 4: "ORBIT", 5: "(n/a)"}
 
 
@@ -61,6 +61,10 @@ class UiNode(Node):
         self.phone_frame = None    # /phone/image (촬영 카메라)
         self.oak_frame = None      # /oak/rgb/image_raw (손동작 인식 카메라)
         self.phone_zoom = 1.0      # /phone/zoom (현재/목표 줌 배율)
+        # 영상 뷰 상태기계: phone(폰 전체) / split(2분할) / oak(OAK 전체). Oak 버튼이 사이클.
+        self.view = "phone"
+        self._pre_split = "phone"   # split 직전의 전체화면 소스(반대로 전환용)
+        self._oak_cyc_prev = 0      # /gesture_ui oak_cycle 카운터 edge 감지용
 
         # ----- 녹화(REC) → 파일 저장 상태 -----
         self.output_dir = self._resolve_output_dir(
@@ -305,22 +309,52 @@ class UiNode(Node):
         if self.teleop_on and not self.mode_select:
             self._teleop_poll()
         state = self.snap.get("state")
-        oak_view = bool(self.snap.get("ui_flags", {}).get("oak_view", False))
-        # 폰 영상이 없으면(미연결/nophone) 메뉴에서도 분할하지 않고 OAK 전체 배경.
-        #  (검은 PHONE 반쪽 방지) — OAK view 토글은 명시적이라 그대로 분할.
-        split = oak_view or (state == "MENU" and self.phone_frame is not None)
-        bg = self.phone_frame if self.phone_frame is not None else self.oak_frame
-        self._rec_tick(bg)   # REC ON 이면 메인 영상(폰 없으면 OAK)을 파일에 기록
+        # ----- OAK 버튼 사이클: 전체화면 ↔ 2분할 ↔ 반대 전체화면 -----
+        cyc = int(self.snap.get("ui_flags", {}).get("oak_cycle", 0))
+        if cyc != self._oak_cyc_prev:
+            self._oak_cyc_prev = cyc
+            self._advance_view()
+        view = self.view
+        if self.phone_frame is None:
+            view = "oak"             # 폰 없으면 항상 OAK 전체
+        if view == "split" and self.phone_frame is not None:
+            split = True
+            main = self.phone_frame  # 좌=폰, 우=OAK
+        elif view == "oak":
+            split = False
+            main = self.oak_frame
+        else:                        # phone 전체
+            split = False
+            main = self.phone_frame if self.phone_frame is not None else self.oak_frame
+        # REC: 화면에 나오는 메인(분할이면 폰, 아니면 main)을 기록
+        self._rec_tick(self.phone_frame if (split or view == "phone") and
+                       self.phone_frame is not None else main)
         self.hud.draw(self.screen, self.snap, mode=self.mode, battery=self.battery,
                       recording=self.recording, rec_start=self.rec_start,
-                      frame=(self.phone_frame if split else bg),
-                      oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
+                      frame=main, oak_frame=self.oak_frame, split=split, zoom=self.phone_zoom)
+        self._draw_mode_label()          # ★좌상단 현재 모드 (폰/OAK 영상 공통)
         if self.mode_select:
             self._draw_mode_overlay()
         # (키보드 안내/상태 오버레이는 거추장스러워 제거 — 키 입력은 그대로 동작)
         self._draw_tuning_text()         # 좌하단 현재/타겟 거리·방위각
         self._draw_yaw_flash()           # 하단 OAK 0점 지정 흰 선 플래시
         pg.display.flip()
+
+    def _advance_view(self):
+        # 전체화면(phone/oak)에서 누르면 2분할(직전 소스 기억).
+        #  2분할에서 누르면 직전과 반대쪽 전체화면으로.
+        if self.view in ("phone", "oak"):
+            self._pre_split = self.view
+            self.view = "split"
+        else:  # split
+            self.view = "oak" if self._pre_split == "phone" else "phone"
+
+    def _draw_mode_label(self):
+        name = MODE_NAMES.get(self.mode, str(self.mode))
+        txt = "MODE: %s" % name
+        # 좌상단, 가독성 위해 검은 외곽선 + 흰 글씨
+        self.screen.blit(self.kfont.render(txt, True, (0, 0, 0)), (12, 8))
+        self.screen.blit(self.kfont.render(txt, True, (255, 255, 255)), (11, 7))
 
     def _draw_tuning_text(self):
         # 좌하단: 현재 주인 거리/방위각(흰), 타겟 거리/방위각(파랑). 튜닝용.

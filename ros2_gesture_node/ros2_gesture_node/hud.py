@@ -220,7 +220,6 @@ class Hud:
         hold_g = snap.get("hold_gesture", "")
         prog = float(snap.get("hold_progress", 0.0))
         repeating = bool(snap.get("repeating", False))
-        oak_on = bool(snap.get("ui_flags", {}).get("oak_view", False))
         # 방향 메뉴(Wheel/Lift)면 글리프 카드, 아니면 숫자+라벨 카드
         directional = any(it["gesture"].startswith("p_") for it in items)
         n = len(items)
@@ -235,8 +234,6 @@ class Hud:
             label = it["label"]
             if label == "Rec":
                 label = "Rec OFF" if recording else "Rec ON"
-            elif label == "OAK view":
-                label = "OAK OFF" if oak_on else "OAK ON"
             if active and repeating:
                 self._panel(scr, rect, (255, 255, 255), 245); col = INK
             else:

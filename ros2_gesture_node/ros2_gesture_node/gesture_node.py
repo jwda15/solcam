@@ -272,8 +272,12 @@ class GestureNode(Node):
         elif action.kind == "cancel":
             pass   # No/취소 — 메뉴만 닫힘(아무 동작 없음)
         elif action.kind == "ui":
-            key = action.payload["toggle"]
-            self.ui_flags[key] = not self.ui_flags.get(key, False)
+            if "press" in action.payload:   # 누를 때마다 +1 (ui_node 가 edge로 사이클)
+                key = action.payload["press"]
+                self.ui_flags[key] = int(self.ui_flags.get(key, 0)) + 1
+            else:
+                key = action.payload["toggle"]
+                self.ui_flags[key] = not self.ui_flags.get(key, False)
 
     def _run_system(self, cmd):
         """전원/종료 실제 실행. (메뉴 Other>More 안쪽이라 오발동 위험 낮음)"""

@@ -138,7 +138,7 @@ def build_menu(p: dict) -> MenuNode:
                 "one": MenuNode("Zoom +", action=Action("phone", "Zoom +", {"cmd": "zoom_in"},  stay=True)),
                 "two": MenuNode("Zoom -", action=Action("phone", "Zoom -", {"cmd": "zoom_out"}, stay=True)),
             }),
-            "two":   MenuNode("OAK view", action=Action("ui", "OAK view", {"toggle": "oak_view"})),
+            "two":   MenuNode("Oak", action=Action("ui", "Oak", {"press": "oak_cycle"})),
             "three": MenuNode("Rec", action=Action("phone", "Rec", {"cmd": "record_toggle"})),
             "four":  MenuNode("More", children={      # 시스템: 도움말/전원/종료
                 "one":   MenuNode("Help", action=Action("ui", "Help", {"toggle": "help"})),
