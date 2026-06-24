@@ -52,11 +52,15 @@ double Pid::update(double error, double dt)
     return 0.0;
   }
 
-  // 적분 (windup 클램프)
-  integral_ += error * dt;
+  // ★연속 불감대: 비례항 오차에서 데드존만큼 빼서 경계 바로 밖에서 0부터 출발.
+  //  (그냥 kp*error 면 경계에서 0→kp*deadzone 으로 점프해 "훅" 가속이 생김)
+  double e_p = error - std::copysign(deadzone_, error);
+
+  // 적분 (windup 클램프) — 연속화한 오차로 누적
+  integral_ += e_p * dt;
   integral_ = std::clamp(integral_, -i_clamp_, i_clamp_);
 
-  // 미분 (첫 호출은 0으로 — 튐 방지)
+  // 미분 (첫 호출은 0으로 — 튐 방지). 미분은 실제 오차 변화율 사용.
   double derivative = 0.0;
   if (has_prev_ && dt > 0.0) {
     derivative = (error - prev_error_) / dt;
@@ -64,7 +68,7 @@ double Pid::update(double error, double dt)
   prev_error_ = error;
   has_prev_ = true;
 
-  double output = kp_ * error + ki_ * integral_ + kd_ * derivative;
+  double output = kp_ * e_p + ki_ * integral_ + kd_ * derivative;
   return std::clamp(output, out_min_, out_max_);
 }
 

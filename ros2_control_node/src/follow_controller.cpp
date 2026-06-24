@@ -147,9 +147,15 @@ void FollowController::computeBodyVelocity(const ControlInput & in,
     return;
   }
 
-  // 글로벌 속도 희망 (축별 PD)
-  double vx_g = pid_x_.update(ex_g, in.dt);
-  double vy_g = pid_y_.update(ey_g, in.dt);
+  // ★연속 불감대: 오차벡터에서 데드존 반경을 빼서(경계서 크기 0) 부드럽게 출발.
+  //  (그냥 전체 오차를 쓰면 경계에서 속도가 0→kp*pos_dead 로 점프 → "훅" 가속)
+  double scale = (err_norm - params_.pos_dead) / err_norm;   // 경계=0, 멀수록 1
+  double ex_eff = ex_g * scale;
+  double ey_eff = ey_g * scale;
+
+  // 글로벌 속도 희망 (축별 PD; pid 자체 데드존은 0이라 여기 연속화가 유일 처리)
+  double vx_g = pid_x_.update(ex_eff, in.dt);
+  double vy_g = pid_y_.update(ey_eff, in.dt);
 
   // 벡터 크기 제한 (축별 클램프만으론 대각선이 v_max*√2 가 될 수 있음)
   double v_norm = std::hypot(vx_g, vy_g);
