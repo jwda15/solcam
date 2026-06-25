@@ -35,8 +35,8 @@ struct ControllerParams
   double w_body_max     = 0.5;   // rad/s, 몸체 각속도 상한 [0625 0.4→0.5 옆이동 추종 빠르게]
                                  //  ※회전도 휠 토크를 씀. 직진+회전 동시 시
                                  //   휠 부하가 더 커지니 토크 빠듯하면 같이 낮출 것.
-  double body_accel_max = 0.3;   // m/s^2, 평면 가속 상한 (슬루) [0623 0.5→0.3: 더 부드럽게 출발]
-  double yaw_accel_max  = 0.8;   // rad/s^2, 각가속 상한 (슬루) [0623 1.5→0.8: 회전 천천히]
+  double body_accel_max = 0.5;   // m/s^2, 평면 가속 상한 (슬루) [0625 0.3→0.5: 출발 반응 빠르게]
+  double yaw_accel_max  = 1.3;   // rad/s^2, 각가속 상한 (슬루) [0625 0.8→1.3: 회전 출발 빠르게]
   double w_top_max      = 1.5;   // rad/s, 상단yaw 목표각 변화율 상한 (스텝 보호)
   double top_lead_max   = 0.8;   // rad, 상단yaw 목표가 실측각(theta_head)보다
                                  //  앞설 수 있는 최대 리드. 드라이버가 멈추거나
