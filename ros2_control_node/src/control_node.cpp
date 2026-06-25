@@ -397,8 +397,8 @@ void ControlNode::yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr ms
   yaw_warn_latched_ = false;
   // 구도 기동 시작: 현재 몸체각에서 off 만큼 자전할 목표각을 잡고 주행 보류.
   //  종료는 주인 따봉 확정(/compose_confirm). 제스처가 영영 안 와도 멈추도록 안전 타임아웃.
-  compose_target_yaw_ = wrapAngle(odom_.pose.yaw + off);
-  compose_until_ = this->now() + rclcpp::Duration::from_seconds(60.0);
+  compose_target_yaw_ = wrapAngle(odom_.pose.yaw + off);   // off=+90(Left)→ 몸체 좌회전
+  compose_until_ = this->now() + rclcpp::Duration::from_seconds(30.0);  // 따봉 없을 때 안전종료
   compose_active_ = true;
   RCLCPP_INFO(this->get_logger(),
     "촬영구도: off=%.0f° → heading_offset 설정. 자전+OAK재정렬 후 따봉 확정 대기 "
@@ -679,16 +679,12 @@ void ControlNode::controlStep()
     if (compose_active_ && !active) compose_active_ = false;   // 안전 타임아웃
     if (active) {
       // 모드와 무관하게 몸체를 목표각까지 '제자리 자전'(메카넘 회전). 주행(평면이동)은 보류.
-      //  → FOLLOW2 처럼 헤딩제어 안 하는 모드에서도 프리셋 선택 시 휠이 돈다.
+      //  자전이 끝나도 OAK 정렬을 사용자가 보고 따봉으로 잠글 때까지 기동 유지(자동종료 안 함).
+      cmd.body_vx = 0.0;
+      cmd.body_vy = 0.0;
       double yaw_err = wrapAngle(compose_target_yaw_ - odom_.pose.yaw);
-      if (std::abs(yaw_err) < 0.06) {     // 목표각 도달 → 기동 종료(주행 재개, 60s 안 매달림)
-        active = false; compose_active_ = false;
-      } else {
-        cmd.body_vx = 0.0;
-        cmd.body_vy = 0.0;
-        cmd.body_yaw_rate = std::clamp(params_.kp_byaw * yaw_err,
-                                       -params_.w_body_max, params_.w_body_max);
-      }
+      cmd.body_yaw_rate = std::clamp(params_.kp_byaw * yaw_err,
+                                     -params_.w_body_max, params_.w_body_max);
     }
     if (active != compose_pub_last_) {
       std_msgs::msg::Bool m; m.data = active;
@@ -835,14 +831,24 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
     return;
   }
 
-  // ★상단yaw 능동추적은 오직 2.Wheel 메뉴가 열려 있을 때만(wheel_active_).
-  //  그 외(일반 주행·구도기동 포함)엔 무조건 고정 — 주행 중엔 절대 안 돈다.
-  //  (메뉴를 닫는 순간 wheel_active_=false 가 와서 즉시 고정으로 전환된다.)
-  if (!wheel_active_) {
+  // ★상단yaw 능동추적은 딱 두 경우만: ① 2.Wheel 메뉴 열림(wheel_active_, 수동 조준),
+  //  ② 구도 기동 중(compose_active_, 프리셋 선택 후 OAK를 주인에 정렬). 그 외(일반 주행)엔
+  //  무조건 고정 — 주행 중엔 절대 안 돈다. 둘 다 메뉴/기동이 끝나면 즉시 고정.
+  if (!wheel_active_ && !compose_active_) {
     cmd.top_yaw_target = 0.0;   // 고정(정지)
     cmd.top_yaw_active = false;
     head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 누적 유지
     return;
+  }
+
+  // ★구도 기동 중 주인 미검출이면 개루프로 -heading_offset(예상 주인방향)까지 OAK를 보낸다
+  //  → 주인이 OAK 화면에 들어옴 → 아래 trackTopYaw 결과(방위각)로 바로 좌우 정렬.
+  //  (주인 보이면 trackTopYaw 가 이미 cmd.top_yaw_target 을 azimuth 기준으로 채워둠)
+  if (compose_active_ && !owner_detected) {
+    double err = wrapAngle(-adjust_.heading_offset - head_angle_);
+    cmd.top_yaw_target = (std::abs(err) < 0.05)
+        ? 0.0 : params_.top_yaw_sign * (err > 0.0 ? 1.0 : -1.0);  // trackTopYaw 와 부호 일관
+    cmd.top_yaw_active = (cmd.top_yaw_target != 0.0);
   }
 
   // trackTopYaw 결과 = 원하는 회전 방향(+1/-1/0). top_yaw_sign 은 이미 반영됨.
@@ -902,19 +908,7 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
   }
 
   head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 추정용 스테이지각
-
-  // ★촬영구도 수렴 보정: 기동 중 주인이 OAK 중앙(azimuth≈0)에 재정렬되면,
-  //  펄스 데드레코닝 오차를 버리고 theta_head 를 정확값 -heading_offset 으로 고정.
-  //  = "영상으로 알아낸 몸체-OAK 각"을 제어에 확정 반영.
-  if (compose_active_ && owner_detected &&
-      std::abs(owner_az) < params_.azDeadFor(owner_dist)) {
-    double exact = wrapAngle(-adjust_.heading_offset);
-    head_angle_ = exact;
-    if (params_.top_yaw_speed > 1e-6) {
-      yaw_time_accum_ = std::clamp(exact / params_.top_yaw_speed,
-                                   -params_.yaw_time_limit, params_.yaw_time_limit);
-    }
-  }
+  // (확정은 주인 따봉 = composeConfirmCallback 에서만. 자동 고정 안 함 — 사용자가 잠근다.)
 }
 
 // 현재 모드가 유지하려는 목표 거리[m] (UI/디버그 표시용).

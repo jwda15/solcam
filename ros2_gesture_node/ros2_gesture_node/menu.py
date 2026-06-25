@@ -127,10 +127,12 @@ def build_menu(p: dict) -> MenuNode:
             #     맞춘다(개루프 킥 → OAK 영상으로 자가 보정). 정확한 몸체-OAK 각이 확정됨.
             #   ★Pan(쓰리건)·Farther/Closer(주인기준 전후진) 제거 — Front=정면구도로 대체.
             "two": MenuNode("More", children={
+                # deg = 몸체 자전량(+CCW=좌). Left=+90(좌회전), Right=-90(deg270,우회전).
+                #  ★실차에서 Left가 우로 돌면 Left/Right deg(90↔270)만 맞바꾸면 됨.
                 "one":   MenuNode("Front", action=Action("yaw", "Front", {"deg": 0})),
-                "two":   MenuNode("Right", action=Action("yaw", "Right", {"deg": 90})),
+                "two":   MenuNode("Right", action=Action("yaw", "Right", {"deg": 270})),
                 "three": MenuNode("Back",  action=Action("yaw", "Back",  {"deg": 180})),
-                "four":  MenuNode("Left",  action=Action("yaw", "Left",  {"deg": 270})),
+                "four":  MenuNode("Left",  action=Action("yaw", "Left",  {"deg": 90})),
                 "p_left":  adj("Orbit CCW", "ORBIT_JOG", +jo, delta=False),  # 주인 둘레 반시계
                 "p_right": adj("Orbit CW",  "ORBIT_JOG", -jo, delta=False),  # 시계
             }),
@@ -175,9 +177,9 @@ def build_menu(p: dict) -> MenuNode:
     #   1.5초 유지하면 선택→발행→닫힘. 20초 무선택이면 닫고 데드레코닝값 유지.
     root.yaw_set = MenuNode("AngleSet", timeout=20.0, children={
         "one":   MenuNode("Front", action=Action("yaw", "Front", {"deg": 0})),
-        "two":   MenuNode("Right", action=Action("yaw", "Right", {"deg": 90})),
+        "two":   MenuNode("Right", action=Action("yaw", "Right", {"deg": 270})),
         "three": MenuNode("Back",  action=Action("yaw", "Back",  {"deg": 180})),
-        "four":  MenuNode("Left",  action=Action("yaw", "Left",  {"deg": 270})),
+        "four":  MenuNode("Left",  action=Action("yaw", "Left",  {"deg": 90})),
     })
     return root
 
@@ -229,6 +231,11 @@ class MenuStateMachine:
                 self._touch_activity(t)
             node_timeout = cur.timeout if cur.timeout is not None else self.menu_timeout
             if t - self._last_activity > node_timeout:
+                # AngleSet 에서 타임아웃 → Left/Right(±90) 즉시 스냅(역따봉과 동일)
+                if self.root.yaw_set is not None and cur is self.root.yaw_set:
+                    self._angleset_snap_event(ev)
+                    self._close("timeout", ev)
+                    return ev
                 # 자전을 쓰고 Wheel 안에서 타임아웃 → 닫지 말고 각도확정으로
                 if self._spin_used and self._wheel_in_path():
                     self._enter_yaw_set(t, ev)
@@ -305,6 +312,14 @@ class MenuStateMachine:
         self._spin_dir = None
         ev.append(Event("close", reason=reason))
 
+    def _angleset_snap_event(self, ev):
+        # AngleSet 닫힘(역따봉/타임아웃) = 자전 방향 쪽 Left/Right(±90°) 즉시 스냅.
+        #  "snap": True → control_node 가 몸체 자전·OAK 기동 없이 각도만 확정(파란바 없음).
+        #  Left=deg90(+90,좌회전), Right=deg270(-90,우). 시연 기본=Left.
+        deg = 270 if self._spin_dir == "gun_right" else 90
+        self.last_action_name = "Diag"
+        ev.append(Event("action", action=Action("yaw", "Diag", {"deg": deg, "snap": True})))
+
     def _wheel_in_path(self) -> bool:
         """현재 경로에 Wheel(②) 노드가 있는가 (Wheel 또는 Wheel/More)."""
         wheel = self.root.children.get("two")
@@ -324,14 +339,10 @@ class MenuStateMachine:
         cur = self.path[-1]
         self._repeating = False
         if gesture == BACK:
-            # ★AngleSet 에서 역따봉 = 자전한 방향 쪽 대각선 45° 스냅(기동 없이 즉시 인지).
-            #   gun_left(쓰리건 좌)→Front~Left(deg 315=-45°), gun_right→Front~Right(deg 45).
-            #   "snap": True → control_node 가 몸체 자전 없이 각도만 확정(파란바 안 뜸).
+            # ★AngleSet 에서 역따봉 = 자전한 방향 쪽 Left/Right(±90°) 즉시 스냅(기동/파란바 없음).
+            #   이미 손동작+몸으로 그쪽으로 맞춰뒀으니 각도만 확정만 하면 됨.
             if self.root.yaw_set is not None and cur is self.root.yaw_set:
-                deg = 315 if self._spin_dir == "gun_left" else 45
-                self.last_action_name = "Diag"
-                ev.append(Event("action", action=Action(
-                    "yaw", "Diag", {"deg": deg, "snap": True})))
+                self._angleset_snap_event(ev)
                 self._close("done", ev)
                 self._await_release = BACK
                 return

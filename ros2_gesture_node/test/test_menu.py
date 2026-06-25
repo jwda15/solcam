@@ -143,7 +143,7 @@ def test_wheel_more_orbit_jog():
 
 def test_wheel_more_compose_presets():
     # one=Front(0) two=Right(90) three=Back(180) four=Left(270) → yaw 액션(/yaw_set_angle)
-    for key, deg in [("one", 0), ("two", 90), ("three", 180), ("four", 270)]:
+    for key, deg in [("one", 0), ("two", 270), ("three", 180), ("four", 90)]:  # Right=270,Left=90
         sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t); t = nav(sm, "two", t)
         a = [e for e in feed(sm, key, t, 1.6)[0] if e.kind == "action"][0].action
         assert a.kind == "yaw" and a.payload["deg"] == deg
@@ -171,16 +171,16 @@ def test_angleset_back_diagonal_snap():
     assert sm.path[-1].label == "AngleSet"
     feed(sm, None, t, 0.2); t += 0.3
     a = [e for e in feed(sm, "dislike", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.kind == "yaw" and a.payload["deg"] == 315 and a.payload.get("snap") is True
+    assert a.kind == "yaw" and a.payload["deg"] == 90 and a.payload.get("snap") is True  # Left
     assert sm.state == "IDLE"
-    # gun_right 면 +45°(deg 45)
+    # gun_right 면 Right(deg 270)
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
     feed(sm, "gun_right", t, 1.6); t += 1.7
     feed(sm, None, t, 0.2); t += 0.3
     feed(sm, "dislike", t, 1.6); t += 1.7
     feed(sm, None, t, 0.2); t += 0.3
     a = [e for e in feed(sm, "dislike", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["deg"] == 45 and a.payload.get("snap") is True
+    assert a.payload["deg"] == 270 and a.payload.get("snap") is True
 
 
 def test_wheel_exit_without_spin_no_angleset():
