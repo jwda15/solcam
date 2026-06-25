@@ -136,6 +136,7 @@ void ControlNode::declareParams()
   this->declare_parameter("yaw_pulse_mode",    c.yaw_pulse_mode);
   this->declare_parameter("yaw_pulse_period",  c.yaw_pulse_period);
   this->declare_parameter("yaw_pulse_sec",     c.yaw_pulse_sec);
+  this->declare_parameter("yaw_pulse_min",     c.yaw_pulse_min);
   this->declare_parameter("yaw_time_limit",    c.yaw_time_limit);
   this->declare_parameter("yaw_time_warn",     c.yaw_time_warn);
   this->declare_parameter("yaw_depth_scale",   c.yaw_depth_scale);
@@ -217,6 +218,7 @@ void ControlNode::loadParams()
   params_.yaw_pulse_mode    = this->get_parameter("yaw_pulse_mode").as_bool();
   params_.yaw_pulse_period  = this->get_parameter("yaw_pulse_period").as_double();
   params_.yaw_pulse_sec     = this->get_parameter("yaw_pulse_sec").as_double();
+  params_.yaw_pulse_min     = this->get_parameter("yaw_pulse_min").as_double();
   params_.yaw_time_limit    = this->get_parameter("yaw_time_limit").as_double();
   params_.yaw_time_warn     = this->get_parameter("yaw_time_warn").as_double();
   params_.yaw_depth_scale   = this->get_parameter("yaw_depth_scale").as_bool();
@@ -830,8 +832,15 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
       out_dir = yaw_pulse_dir_;                 // 진행 중인 펄스 유지
     } else if (want != 0 &&
                (now - yaw_last_pulse_).seconds() >= params_.yawPeriodFor(owner_dist)) {
+      // ★비례 펄스: 방위각이 데드존을 많이 넘으면 길게(빠르게), 중앙 근처면 짧게 쳐서
+      //  오버슈트·좌우 헌팅 없이 살살 정착. over=0(경계)→min, over≥데드존→max.
+      double azd  = params_.azDeadFor(owner_dist);
+      double over = std::abs(owner_az) - azd;
+      double frac = std::clamp(over / std::max(azd, 1e-3), 0.0, 1.0);
+      double pulse_sec = params_.yaw_pulse_min +
+                         frac * (params_.yaw_pulse_sec - params_.yaw_pulse_min);
       yaw_pulse_dir_   = want;                  // 새 펄스 시작
-      yaw_pulse_until_ = now + rclcpp::Duration::from_seconds(params_.yaw_pulse_sec);
+      yaw_pulse_until_ = now + rclcpp::Duration::from_seconds(pulse_sec);
       yaw_last_pulse_  = now;
       out_dir = want;
     } else {
