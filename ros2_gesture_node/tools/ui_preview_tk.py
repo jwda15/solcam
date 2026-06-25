@@ -56,7 +56,8 @@ KEY2GEST = {"l": "like", "1": "one", "2": "two", "3": "three", "4": "four",
             "z": "gun_left", "x": "gun_right"}
 GNUM = {"one": "1", "two": "2", "three": "3", "four": "4"}
 # 방향 카드 글리프 (권총 방향 + 자전). two(=V)는 휠에서 리셋이라 'V'.
-GSYM = {"p_up": "↑", "p_down": "↓", "p_left": "←", "p_right": "→",
+# [0625] 좌/우 화살표 swap — 카메라 미러로 오른쪽 손동작이 p_left 로 잡혀 표시가 반대였음.
+GSYM = {"p_up": "↑", "p_down": "↓", "p_left": "→", "p_right": "←",
         "gun_left": "↻", "gun_right": "↺", "two": "V"}
 
 W, H = 1024, 600

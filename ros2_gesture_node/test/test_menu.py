@@ -101,12 +101,12 @@ def test_more_submodes():
 def test_wheel_jog_translate():
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)   # Wheel
     a = [e for e in feed(sm, "p_up", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["param"] == "BODY_VX" and a.payload["value"] > 0
+    assert a.payload["param"] == "BODY_VX" and a.payload["value"] < 0   # ↑ = 후진(멀어짐)
     assert a.payload["delta"] is False        # 절대 속도
 
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
     a = [e for e in feed(sm, "p_down", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["param"] == "BODY_VX" and a.payload["value"] < 0
+    assert a.payload["param"] == "BODY_VX" and a.payload["value"] > 0   # ↓ = 전진(가까이)
 
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
     a = [e for e in feed(sm, "p_left", t, 1.6)[0] if e.kind == "action"][0].action
@@ -116,10 +116,10 @@ def test_wheel_jog_translate():
 def test_wheel_jog_spin():
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
     a = [e for e in feed(sm, "gun_left", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["param"] == "BODY_WZ" and a.payload["value"] < 0   # 좌 = 시계(CW,-)
+    assert a.payload["param"] == "BODY_WZ" and a.payload["value"] > 0   # [0625] 구동부호 반전
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
     a = [e for e in feed(sm, "gun_right", t, 1.6)[0] if e.kind == "action"][0].action
-    assert a.payload["param"] == "BODY_WZ" and a.payload["value"] > 0   # 우 = 반시계(+)
+    assert a.payload["param"] == "BODY_WZ" and a.payload["value"] < 0
 
 
 def test_wheel_jog_repeats_and_stops():

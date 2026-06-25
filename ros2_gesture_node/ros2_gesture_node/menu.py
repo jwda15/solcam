@@ -111,12 +111,14 @@ def build_menu(p: dict) -> MenuNode:
         #   쓰리건 ←/→ 자전 시계/반시계(BODY_WZ). delta=False(절대 속도, 손 떼면 정지).
         #   메뉴를 나가면 모드가 '바뀐 주인 거리/방향'으로 재시작(control_node 재engage).
         "two": MenuNode("Wheel", children={
-            "p_up":    adj("Forward",  "BODY_VX", +jl, delta=False),  # 상 = 전진
-            "p_down":  adj("Backward", "BODY_VX", -jl, delta=False),  # 하 = 후진
-            "p_left":  adj("Left",     "BODY_VY", +jl, delta=False),  # 좌 = 좌측면(+vy)
-            "p_right": adj("Right",    "BODY_VY", -jl, delta=False),  # 우 = 우측면
-            "gun_left":  adj("Spin CW",  "BODY_WZ", -ja, delta=False),  # 좌 = 시계 자전
-            "gun_right": adj("Spin CCW", "BODY_WZ", +ja, delta=False),  # 우 = 반시계 자전
+            # [0625] 상/하·쓰리건: 표시는 맞고 구동만 반대였음 → 부호만 반전(표시 유지).
+            #        좌/우: 손동작·구동은 맞고 화살표만 반대였음 → 라벨 교정(+GSYM 글리프 swap).
+            "p_up":    adj("Backward", "BODY_VX", -jl, delta=False),  # ↑ = 멀어짐(후진)
+            "p_down":  adj("Forward",  "BODY_VX", +jl, delta=False),  # ↓ = 가까이(전진)
+            "p_left":  adj("Right",    "BODY_VY", +jl, delta=False),  # 표시만 교정(구동 그대로)
+            "p_right": adj("Left",     "BODY_VY", -jl, delta=False),
+            "gun_left":  adj("Spin CW",  "BODY_WZ", +ja, delta=False),  # 구동방향만 반전
+            "gun_right": adj("Spin CCW", "BODY_WZ", -ja, delta=False),
             # V(two) → More: ★주인기준 모션 jog(공전/거리) — 모든 모드에서 동작.
             #   목표값 조정이 아니라 "도는/다가가는 운동" 자체. 손 떼면 정지, 메뉴 나가면 재engage.
             # ── More: 촬영 구도 프리셋(손가락 개수) + 공전 jog(검지) ──

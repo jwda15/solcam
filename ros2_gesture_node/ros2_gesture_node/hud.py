@@ -23,7 +23,8 @@ MODE_NAMES = {0: "IDLE", 1: "FOLLOW", 2: "ROTATE", 3: "FOLLOW2",
               4: "ORBIT", 5: "MODE 5"}
 GESTURE_NUM = {"one": "1", "two": "2", "three": "3", "four": "4"}
 # 방향 카드 글리프(권총 방향+자전). two(=V)는 휠에서 리셋 → 'V'.
-GSYM = {"p_up": "\u2191", "p_down": "\u2193", "p_left": "\u2190", "p_right": "\u2192",
+# [0625] \uc88c/\uc6b0 \ud654\uc0b4\ud45c swap \u2014 \uce74\uba54\ub77c \ubbf8\ub7ec\ub85c \uc624\ub978\ucabd \uc190\ub3d9\uc791\uc774 p_left \ub85c \uc7a1\ud600 \ud45c\uc2dc\uac00 \ubc18\ub300\uc600\uc74c.
+GSYM = {"p_up": "\u2191", "p_down": "\u2193", "p_left": "\u2192", "p_right": "\u2190",
         "gun_left": "\u21bb", "gun_right": "\u21ba", "two": "V"}
 
 # 테마 (흰 70 / 파랑 20 / 검정 10) — 테마 블루 #1e90ff
