@@ -448,12 +448,30 @@ class Preview:
     def _draw_help_overlay(self):
         c = self.cv
         c.create_rectangle(0, 0, W, H, fill=BG, outline="")
-        c.create_text(W//2, H//2 - 40, text="SolCam Help", fill=WHITE,
-                      font=("Segoe UI", 28, "bold"))
-        c.create_text(W//2, H//2 + 6, text="(도움말 내용 준비 중)", fill=DIM,
-                      font=("Segoe UI", 14))
-        c.create_text(W//2, H//2 + 46, text="K (역따봉) 로 닫기", fill=DIM,
+        c.create_text(W//2, 50, text="SolCam Help", fill=WHITE,
+                      font=("Segoe UI", 24, "bold"))
+        if not getattr(self, "_help_tried", False):
+            self._help_tried = True
+            self._help_photo = self._load_help_photo()
+        if getattr(self, "_help_photo", None) is not None:
+            c.create_image(W//2, H//2, image=self._help_photo)
+        else:
+            c.create_text(W//2, H//2, fill=DIM, font=("Segoe UI", 13),
+                          text="(help 이미지는 실제 LCD UI에서 표시 — Tk엔 PIL 필요)")
+        c.create_text(W//2, H-30, text="K (역따봉) 로 닫기", fill=DIM,
                       font=("Segoe UI", 12))
+
+    def _load_help_photo(self):
+        path = Path(__file__).resolve().parents[2] / "image" / "helpimage.JPG"
+        if not path.exists():
+            return None
+        try:   # JPG 는 Tk PhotoImage 미지원 → PIL 있으면 사용(없으면 안내)
+            from PIL import Image, ImageTk
+            img = Image.open(path)
+            img.thumbnail((int(W * 0.6), int(H * 0.6)))
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
 
     def _gauge(self, cx, cy, frac):
         if frac <= 0: return

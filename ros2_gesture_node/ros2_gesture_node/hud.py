@@ -56,6 +56,8 @@ class Hud:
         self._last_rects = {}
         self._flash_until = 0.0
         self._flash_rect = None
+        self._help_img = None       # Help 오버레이 이미지(지연 로드 캐시)
+        self._help_tried = False
 
     def draw(self, scr, snapshot, *, mode=0, battery=None,
              recording=False, rec_start=0.0, frame=None,
@@ -107,14 +109,45 @@ class Hud:
         self._center(scr, "hold a number to choose  -  K to cancel",
                      self.f_small, HINT, y + ch + 26)
 
+    def _resolve_help_image(self):
+        import os
+        cands = []
+        repo = os.environ.get("SOLCAM_REPO")
+        if repo:
+            cands.append(os.path.join(repo, "image", "helpimage.JPG"))
+        cands.append(os.path.expanduser("~/solcam/image/helpimage.JPG"))
+        here = os.path.dirname(os.path.abspath(__file__))
+        cands.append(os.path.join(here, "..", "..", "image", "helpimage.JPG"))
+        for p in cands:
+            if os.path.exists(p):
+                return p
+        return None
+
     def _draw_help(self, scr, w, h):
         pg = self.pg
         s = pg.Surface((w, h), pg.SRCALPHA)
-        pg.draw.rect(s, (13, 15, 18, 215), s.get_rect())
+        pg.draw.rect(s, (13, 15, 18, 230), s.get_rect())
         scr.blit(s, (0, 0))
-        self._center(scr, "SolCam Help", self.f_mid, WHITE, h // 2 - 70)
-        self._center(scr, "(도움말 내용 준비 중)", self.f_small, DIM, h // 2 - 24)
-        self._center(scr, "reverse thumbs-up (K) to close", self.f_small, HINT, h // 2 + 24)
+        self._center(scr, "SolCam Help", self.f_mid, WHITE, 40)
+        # 도움말 이미지(지연 로드, 한 번만 시도). 화면 안에 들어오게 축소.
+        if not self._help_tried:
+            self._help_tried = True
+            p = self._resolve_help_image()
+            if p:
+                try:
+                    self._help_img = pg.image.load(p).convert()
+                except Exception:
+                    self._help_img = None
+        img = self._help_img
+        if img is not None:
+            iw, ih = img.get_size()
+            scale = min(w * 0.7 / iw, h * 0.6 / ih, 1.0)
+            sw, sh = max(1, int(iw * scale)), max(1, int(ih * scale))
+            simg = pg.transform.smoothscale(img, (sw, sh))
+            scr.blit(simg, ((w - sw) // 2, (h - sh) // 2))
+        else:
+            self._center(scr, "(도움말 이미지 없음)", self.f_small, DIM, h // 2)
+        self._center(scr, "reverse thumbs-up (K) to close", self.f_small, HINT, h - 30)
 
     # ----- 단발 확정 흰 반짝 (progress 하강 엣지, 연속 jog 제외) -----
     def _detect_confirm(self, snap):
