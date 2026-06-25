@@ -101,6 +101,7 @@ ControlNode::ControlNode()
   yaw_zero_block_until_ = this->now();   // 시작 시점=쿨다운 없음
   yaw_pulse_until_      = this->now();
   yaw_last_pulse_       = this->now();
+  compose_until_        = this->now();   // 노드 시계타입으로 초기화(기동 전 비교 안전)
 
   RCLCPP_INFO(this->get_logger(),
     "control_node 시작. rate=%.0fHz, mode=%d, seg_D=%.2fm, 회피=%s",

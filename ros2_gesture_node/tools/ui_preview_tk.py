@@ -366,10 +366,12 @@ class Preview:
         c = self.cv
         secs = int(time.time() - self.rec_start) if self.rec_start else 0
         txt = f"REC {secs//60}:{secs%60:02d}"
-        c.create_text(W-14, 16, text=txt, anchor="e", fill=REC_RED,
-                      font=("Segoe UI", 12, "bold"))
-        c.create_oval(W-14-7*len(txt)-12, 12, W-14-7*len(txt)-4, 20,
-                      fill=REC_RED, outline="")
+        rx, cy = W - 14, 18
+        c.create_text(rx, cy, text=txt, anchor="e", fill=REC_RED, font=self.f_rec)
+        # 점은 측정한 실제 글자폭 기준 왼쪽에 여유두고(겹침 방지)
+        tw = self.f_rec.measure(txt)
+        dot_cx = rx - tw - 11
+        c.create_oval(dot_cx - 4, cy - 4, dot_cx + 4, cy + 4, fill=REC_RED, outline="")
 
     def _detect_confirm(self, snap):
         prog = snap.get("hold_progress", 0.0)
