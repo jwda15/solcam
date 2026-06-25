@@ -257,7 +257,7 @@ class Preview:
             if self.held == "like":
                 if self._compose_like_start is None:
                     self._compose_like_start = t
-                elif t - self._compose_like_start >= 1.5:
+                elif t - self._compose_like_start >= 0.2:   # [0625] 1.5→0.2 즉시 정지
                     self._compose_active = False
                     self._compose_like_start = None
             else:
@@ -526,7 +526,7 @@ class Preview:
         if self._compose_like_start is not None:
             frac = min(1.0, (time.time() - self.t0 - self._compose_like_start) / 1.5)
         c.create_text(W//2, H-30, fill=WHITE, font=("Segoe UI", 12, "bold"),
-                      text="adjusting OAK...  hold THUMBS-UP (L) 1.5s to confirm & drive")
+                      text="rotating...  THUMBS-UP (L) to STOP here & drive")
         if frac > 0:
             self._gauge(W//2, H-50, frac)
 

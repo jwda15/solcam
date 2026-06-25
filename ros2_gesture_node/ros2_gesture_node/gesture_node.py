@@ -113,7 +113,8 @@ class GestureNode(Node):
         # 촬영구도 자동 기동(control_node /compose_active) 동안 따봉 1.5s 유지 = 확정.
         self._compose_active = False    # control_node 가 기동중이라고 알린 상태
         self._compose_like_start = None # 따봉 연속 유지 시작시각
-        self._compose_hold = 1.5        # 확정에 필요한 따봉 유지[s]
+        self._compose_hold = 0.2        # 확정(즉시 정지)에 필요한 따봉 유지[s]
+                                        #  [0625 1.5→0.2: 원하는 각(예 ±90°)에서 바로 멈추게]
 
         rtype = str(gp("recognizer"))
         self.mock_mode = rtype == "mock"
@@ -230,24 +231,10 @@ class GestureNode(Node):
 
     # ----- 사건 → 토픽 ----------------------------------------------------
     def _handle_rockon(self, raw_label, t):
-        # 메뉴 상태기계와 독립적으로 rock_on(검지+새끼) 0.5s 홀드를 감지해
-        #  /yaw_set_zero 발행. 발동 후 cooldown 동안은 무시(꼬임 정리 + 중복 방지).
-        #  짧은 인식 끊김(dropout)은 허용해 홀드가 쉽게 풀리지 않게 한다.
-        if t < self._rockon_block_until:
-            self._rockon_start = None
-            return
-        if raw_label == "rock_on":
-            self._rockon_last_seen = t
-            if self._rockon_start is None:
-                self._rockon_start = t
-            elif (t - self._rockon_start) >= self._rockon_hold:
-                self.pub_yaw_zero.publish(Empty())
-                self.get_logger().info("rock_on 0.5s → OAK 케이블 0도 지정(/yaw_set_zero)")
-                self._rockon_start = None
-                self._rockon_block_until = t + self._rockon_cooldown
-        elif self._rockon_start is not None and \
-                (t - self._rockon_last_seen) > self._rockon_dropout:
-            self._rockon_start = None   # 다른 동작/장시간 끊김 → 홀드 취소
+        # ★[0625] 락온(rock_on→0점 지정) 동작 제거 — 상단yaw 케이블 한계를 없앴으므로
+        #  0점 재설정/쿨다운이 불필요. 제스처를 인식해도 아무 동작 안 함.
+        #  (다시 켜려면 아래 구버전 로직 복원: rock_on 홀드 → /yaw_set_zero 발행)
+        return
 
     def _compose_active_cb(self, msg):
         self._compose_active = bool(msg.data)
@@ -266,7 +253,7 @@ class GestureNode(Node):
                 elif (t - self._compose_like_start) >= self._compose_hold:
                     self.pub_compose_confirm.publish(Empty())
                     self.get_logger().info(
-                        "따봉 1.5s → 촬영구도 확정(/compose_confirm) → 주행 시작")
+                        "따봉 → 촬영구도 즉시 정지·확정(/compose_confirm) → 주행 시작")
                     self._compose_like_start = None
                 label = None
             else:
