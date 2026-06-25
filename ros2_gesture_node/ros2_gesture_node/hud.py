@@ -111,16 +111,18 @@ class Hud:
 
     def _resolve_help_image(self):
         import os
-        cands = []
+        bases = []
         repo = os.environ.get("SOLCAM_REPO")
         if repo:
-            cands.append(os.path.join(repo, "image", "helpimage.JPG"))
-        cands.append(os.path.expanduser("~/solcam/image/helpimage.JPG"))
+            bases.append(os.path.join(repo, "image"))
+        bases.append(os.path.expanduser("~/solcam/image"))
         here = os.path.dirname(os.path.abspath(__file__))
-        cands.append(os.path.join(here, "..", "..", "image", "helpimage.JPG"))
-        for p in cands:
-            if os.path.exists(p):
-                return p
+        bases.append(os.path.join(here, "..", "..", "image"))
+        for base in bases:
+            for name in ("helpimage.png", "helpimage.JPG", "helpimage.jpg"):
+                p = os.path.join(base, name)
+                if os.path.exists(p):
+                    return p
         return None
 
     def _draw_help(self, scr, w, h):

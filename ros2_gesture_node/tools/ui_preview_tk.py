@@ -462,16 +462,27 @@ class Preview:
                       font=("Segoe UI", 12))
 
     def _load_help_photo(self):
-        path = Path(__file__).resolve().parents[2] / "image" / "helpimage.JPG"
-        if not path.exists():
-            return None
-        try:   # JPG 는 Tk PhotoImage 미지원 → PIL 있으면 사용(없으면 안내)
-            from PIL import Image, ImageTk
-            img = Image.open(path)
-            img.thumbnail((int(W * 0.6), int(H * 0.6)))
-            return ImageTk.PhotoImage(img)
-        except Exception:
-            return None
+        base = Path(__file__).resolve().parents[2] / "image"
+        png = base / "helpimage.png"
+        if png.exists():
+            try:   # PNG 는 Tk PhotoImage 기본 지원(PIL 불필요). 너무 크면 정수배 축소.
+                photo = tk.PhotoImage(file=str(png))
+                fx = max(1, photo.width() // int(W * 0.6) + 1)
+                fy = max(1, photo.height() // int(H * 0.6) + 1)
+                f = max(fx, fy)
+                return photo.subsample(f, f) if f > 1 else photo
+            except Exception:
+                pass
+        jpg = base / "helpimage.JPG"
+        if jpg.exists():
+            try:   # JPG 는 Tk 미지원 → PIL 있으면 사용
+                from PIL import Image, ImageTk
+                img = Image.open(jpg)
+                img.thumbnail((int(W * 0.6), int(H * 0.6)))
+                return ImageTk.PhotoImage(img)
+            except Exception:
+                pass
+        return None
 
     def _gauge(self, cx, cy, frac):
         if frac <= 0: return
