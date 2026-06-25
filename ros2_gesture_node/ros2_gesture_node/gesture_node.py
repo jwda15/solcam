@@ -149,6 +149,10 @@ class GestureNode(Node):
         self.pub_yaw_angle = self.create_publisher(Float32, "/yaw_set_angle", 10)
         # 구도 확정: 자동 기동중 주인이 따봉 1.5s → control_node 가 기동 종료+각도 확정.
         self.pub_compose_confirm = self.create_publisher(Empty, "/compose_confirm", 10)
+        # 2.Wheel 메뉴(또는 그 각도확정 AngleSet)가 열려 있는 동안만 control_node 가
+        #  상단yaw 로 주인을 추적하게 알린다(그 외엔 상단yaw 고정).
+        self.pub_wheel_active = self.create_publisher(Bool, "/wheel_active", 10)
+        self._wheel_active_state = False
         self.create_subscription(Bool, "/compose_active", self._compose_active_cb, 10)
 
         # ----- 키보드 제스처 주입(ui_node /gesture_key) — 카메라 없이/대신 메뉴 조작 -----
@@ -291,6 +295,12 @@ class GestureNode(Node):
         snap = self.sm.snapshot()
         snap["ui_flags"] = self.ui_flags
         self.pub_ui.publish(String(data=json.dumps(snap, ensure_ascii=False)))
+        # 경로에 Wheel(또는 AngleSet)이 있으면 = 2.Wheel 활성 → 상단yaw 추적 허용.
+        path = snap.get("path", [])
+        wheel_active = ("Wheel" in path) or ("AngleSet" in path)
+        if wheel_active != self._wheel_active_state:
+            self._wheel_active_state = wheel_active
+            self.pub_wheel_active.publish(Bool(data=wheel_active))
 
     def _handle(self, ev):
         # gesture_active(몸체 hold) 발행은 _update_gesture_active 가 중앙에서 처리

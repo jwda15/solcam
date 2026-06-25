@@ -77,6 +77,9 @@ ControlNode::ControlNode()
   compose_confirm_sub_ = this->create_subscription<std_msgs::msg::Empty>(
     "/compose_confirm", 10,
     std::bind(&ControlNode::composeConfirmCallback, this, _1));
+  wheel_active_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+    "/wheel_active", 10,
+    std::bind(&ControlNode::wheelActiveCallback, this, _1));
   estop_sub_ = this->create_subscription<std_msgs::msg::Bool>(
     "/estop", 10, std::bind(&ControlNode::estopCallback, this, _1));
   adjust_sub_ = this->create_subscription<AdjustCmd>(
@@ -385,10 +388,11 @@ void ControlNode::yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr)
 void ControlNode::yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr msg)
 {
   double off = wrapAngle(static_cast<double>(msg->data));
-  adjust_.heading_offset = off;          // 몸체 헤딩 목표 = 주인방위 + off (구도 유지)
+  adjust_.heading_offset = off;          // 헤딩제어 모드(FOLLOW1/ROTATE)에서 구도 유지용
   yaw_warn_latched_ = false;
-  // 구도 기동 시작: 주행 보류. 종료는 주인 따봉 확정(/compose_confirm). 단, 제스처가
-  //  영영 안 오면 멈춰있지 않도록 안전 타임아웃(넉넉히)도 둔다.
+  // 구도 기동 시작: 현재 몸체각에서 off 만큼 자전할 목표각을 잡고 주행 보류.
+  //  종료는 주인 따봉 확정(/compose_confirm). 제스처가 영영 안 와도 멈추도록 안전 타임아웃.
+  compose_target_yaw_ = wrapAngle(odom_.pose.yaw + off);
   compose_until_ = this->now() + rclcpp::Duration::from_seconds(60.0);
   compose_active_ = true;
   RCLCPP_INFO(this->get_logger(),
@@ -398,6 +402,12 @@ void ControlNode::yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr ms
 
 // 구도 확정(주인 따봉 1.5s): 자동 기동 종료 → 주행 재개. 이 순간 OAK는 주인을 화면
 //  중앙에 둔 상태이므로 theta_head 를 정확값(-heading_offset)으로 확정 반영한다.
+// 2.Wheel 메뉴 열림/닫힘(gesture_node) → 열려 있는 동안만 상단yaw 가 주인 추적.
+void ControlNode::wheelActiveCallback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+  wheel_active_ = msg->data;
+}
+
 void ControlNode::composeConfirmCallback(const std_msgs::msg::Empty::SharedPtr)
 {
   if (!compose_active_) return;
@@ -644,10 +654,15 @@ void ControlNode::controlStep()
   {
     rclcpp::Time now = this->now();
     bool active = compose_active_ && now < compose_until_;
-    if (compose_active_ && !active) compose_active_ = false;   // 기동 종료
+    if (compose_active_ && !active) compose_active_ = false;   // 안전 타임아웃
     if (active) {
-      cmd.body_vx = 0.0;          // 주행 보류
+      // 모드와 무관하게 몸체를 목표각까지 '제자리 자전'(메카넘 회전). 주행(평면이동)은 보류.
+      //  → FOLLOW2 처럼 헤딩제어 안 하는 모드에서도 프리셋 선택 시 휠이 돈다.
+      cmd.body_vx = 0.0;
       cmd.body_vy = 0.0;
+      double yaw_err = wrapAngle(compose_target_yaw_ - odom_.pose.yaw);
+      cmd.body_yaw_rate = std::clamp(params_.kp_byaw * yaw_err,
+                                     -params_.w_body_max, params_.w_body_max);
     }
     if (active != compose_pub_last_) {
       std_msgs::msg::Bool m; m.data = active;
@@ -794,15 +809,12 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
     return;
   }
 
-  // ★주행 중엔 상단yaw 고정 — 펄스로 흔들리면 theta_head 가 출렁여 몸체 추정/제어가
-  //  오염됨. 평상시엔 몸체가 주인을 향하므로(face_owner) OAK 화면에 주인이 유지된다.
-  //  OAK 독립 추적은 "Wheel 명령 신선" 또는 "헤딩오프셋(Pan) 구도" 일 때만:
-  //   몸체는 풍경을 향하고 OAK 만 주인을 따라가는 연출.
-  bool wheel_fresh =
-      (now - last_jog_time_).seconds() < node_params_.wheel_cmd_timeout ||
-      (now - last_wheel_cmd_time_).seconds() < node_params_.wheel_cmd_timeout;
-  bool composition = std::abs(adjust_.heading_offset) > 0.05;
-  if (!wheel_fresh && !composition) {
+  // ★상단yaw 능동추적은 딱 두 경우만 — 그 외(일반 주행)엔 고정:
+  //   ① wheel_active_ : 2.Wheel 메뉴가 열려 있는 동안(구도 잡는 중) → 주인 추적.
+  //   ② compose_active_ : 프리셋 선택 후 몸체 자전+OAK 재정렬 기동 중.
+  //  주행 중 펄스로 흔들리면 theta_head 가 출렁여 추정/제어가 오염되므로 평상시엔 고정.
+  bool track_now = wheel_active_ || compose_active_;
+  if (!track_now) {
     cmd.top_yaw_target = 0.0;   // 고정(정지)
     cmd.top_yaw_active = false;
     head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 누적 유지
@@ -860,10 +872,10 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
 
   head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 추정용 스테이지각
 
-  // ★촬영구도 수렴 보정: 구도(heading_offset)를 잡은 상태에서 주인이 OAK 중앙
-  //  (azimuth≈0)에 재정렬되면, 펄스 데드레코닝 오차를 버리고 theta_head 를 정확값
-  //  -heading_offset 으로 고정한다. = "영상으로 알아낸 몸체-OAK 각"을 제어에 확정 반영.
-  if (composition && owner_detected &&
+  // ★촬영구도 수렴 보정: 기동 중 주인이 OAK 중앙(azimuth≈0)에 재정렬되면,
+  //  펄스 데드레코닝 오차를 버리고 theta_head 를 정확값 -heading_offset 으로 고정.
+  //  = "영상으로 알아낸 몸체-OAK 각"을 제어에 확정 반영.
+  if (compose_active_ && owner_detected &&
       std::abs(owner_az) < params_.azDeadFor(owner_dist)) {
     double exact = wrapAngle(-adjust_.heading_offset);
     head_angle_ = exact;

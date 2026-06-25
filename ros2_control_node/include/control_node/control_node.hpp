@@ -63,6 +63,7 @@ private:
   void yawSetZeroCallback(const std_msgs::msg::Empty::SharedPtr msg);
   void yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr msg);
   void composeConfirmCallback(const std_msgs::msg::Empty::SharedPtr msg);
+  void wheelActiveCallback(const std_msgs::msg::Bool::SharedPtr msg);
   void estopCallback(const std_msgs::msg::Bool::SharedPtr msg);  // 스페이스바 긴급정지
   void adjustCallback(const ros2_control_node::msg::AdjustCmd::SharedPtr msg);
   void proximityCallback(const ros2_control_node::msg::ProximityArray::SharedPtr msg);
@@ -109,9 +110,11 @@ private:
   int          yaw_pulse_dir_ = 0;    // 현재 펄스 방향(+1/-1)
   bool         yaw_warn_latched_ = false;  // 한계근접 경고 1회 발행 디바운스
   // ----- 촬영구도 기동(프리셋 선택 후 자동 자전+재정렬) 상태 -----
-  bool         compose_active_ = false;    // 기동 중(주행 보류)
+  bool         compose_active_ = false;    // 기동 중(주행 보류, 몸체 자전)
   bool         compose_pub_last_ = false;  // /compose_active 마지막 발행값(변화 시만)
-  rclcpp::Time compose_until_;             // 이 시각까지 기동(회전시간 추정 + 정착 2s)
+  rclcpp::Time compose_until_;             // 이 시각까지 기동(안전 타임아웃)
+  double       compose_target_yaw_ = 0.0;  // 기동 목표 몸체각[rad] (현재각 + off)
+  bool         wheel_active_ = false;      // 2.Wheel 메뉴 열림(이때만 상단yaw 추적)
   double      odom_wz_ = 0.0;        // 오도메트리 측정 몸체 yaw rate [rad/s]
   double      prev_theta_head_ = 0.0;    // 상단 yaw 속도 추정용 직전값
   bool        have_prev_theta_ = false;
@@ -157,6 +160,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr yaw_zero_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr yaw_angle_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr compose_confirm_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr wheel_active_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr estop_sub_;
   rclcpp::Subscription<ros2_control_node::msg::AdjustCmd>::SharedPtr adjust_sub_;
   rclcpp::Subscription<ros2_control_node::msg::ProximityArray>::SharedPtr proximity_sub_;
