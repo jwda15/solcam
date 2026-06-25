@@ -77,6 +77,9 @@ ControlNode::ControlNode()
   compose_confirm_sub_ = this->create_subscription<std_msgs::msg::Empty>(
     "/compose_confirm", 10,
     std::bind(&ControlNode::composeConfirmCallback, this, _1));
+  compose_snap_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+    "/compose_snap", 10,
+    std::bind(&ControlNode::composeSnapCallback, this, _1));
   wheel_active_sub_ = this->create_subscription<std_msgs::msg::Bool>(
     "/wheel_active", 10,
     std::bind(&ControlNode::wheelActiveCallback, this, _1));
@@ -408,6 +411,23 @@ void ControlNode::yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr ms
 void ControlNode::wheelActiveCallback(const std_msgs::msg::Bool::SharedPtr msg)
 {
   wheel_active_ = msg->data;
+}
+
+// 대각선 스냅(자전 후 AngleSet 역따봉): 몸체를 더 돌리지 않고(기동 없음) 이미 수동으로
+//  돌려둔 각을 그대로 확정만 한다. heading_offset/theta_head 즉시 설정 + 기동 종료(파란바 끔).
+void ControlNode::composeSnapCallback(const std_msgs::msg::Float32::SharedPtr msg)
+{
+  double off = wrapAngle(static_cast<double>(msg->data));
+  adjust_.heading_offset = off;
+  head_angle_ = wrapAngle(-off);
+  if (params_.top_yaw_speed > 1e-6) {
+    yaw_time_accum_ = std::clamp(head_angle_ / params_.top_yaw_speed,
+                                 -params_.yaw_time_limit, params_.yaw_time_limit);
+  }
+  compose_active_ = false;   // 기동 없음 — 파란바 끔(다음 controlStep 에서 false 발행)
+  RCLCPP_INFO(this->get_logger(),
+    "대각선 스냅: heading_offset=%.0f°, theta_head=%.0f° (몸체 자전 없음)",
+    off * 180.0 / M_PI, head_angle_ * 180.0 / M_PI);
 }
 
 void ControlNode::composeConfirmCallback(const std_msgs::msg::Empty::SharedPtr)

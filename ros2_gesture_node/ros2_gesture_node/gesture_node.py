@@ -148,6 +148,8 @@ class GestureNode(Node):
         # 각도확정(AngleSet): 자전 후 촬영카메라(몸체)가 OAK(주인) 기준 보는 방향[rad].
         #  control_node 가 heading_offset + theta_head(데드레코닝)를 이 값으로 덮어씀.
         self.pub_yaw_angle = self.create_publisher(Float32, "/yaw_set_angle", 10)
+        # 대각선 스냅: 자전 후 AngleSet 역따봉 → 몸체 자전 없이 각도만 즉시 확정(기동/파란바 없음).
+        self.pub_compose_snap = self.create_publisher(Float32, "/compose_snap", 10)
         # 구도 확정: 자동 기동중 주인이 따봉 1.5s → control_node 가 기동 종료+각도 확정.
         self.pub_compose_confirm = self.create_publisher(Empty, "/compose_confirm", 10)
         # 2.Wheel 메뉴(또는 그 각도확정 AngleSet)가 열려 있는 동안만 control_node 가
@@ -316,11 +318,17 @@ class GestureNode(Node):
             self.pub_system.publish(String(data=action.payload["cmd"]))
             self._run_system(action.payload["cmd"])
         elif action.kind == "yaw":
-            # 각도확정: deg(0/90/180/270) → rad. control_node 가 정확값으로 덮어씀.
+            # 각도확정: deg → rad. snap=True 면 자전 없이 즉시 스냅(/compose_snap),
+            #  아니면 프리셋 기동(/yaw_set_angle: 몸체 자전 + 파란바).
             rad = math.radians(float(action.payload["deg"]))
-            self.pub_yaw_angle.publish(Float32(data=rad))
-            self.get_logger().info(
-                f"각도확정: {action.name}({action.payload['deg']}°) → /yaw_set_angle {rad:.3f}")
+            if action.payload.get("snap"):
+                self.pub_compose_snap.publish(Float32(data=rad))
+                self.get_logger().info(
+                    f"대각선 스냅: {action.name}({action.payload['deg']}°) → /compose_snap {rad:.3f}")
+            else:
+                self.pub_yaw_angle.publish(Float32(data=rad))
+                self.get_logger().info(
+                    f"각도확정: {action.name}({action.payload['deg']}°) → /yaw_set_angle {rad:.3f}")
         elif action.kind == "cancel":
             pass   # No/취소 — 메뉴만 닫힘(아무 동작 없음)
         elif action.kind == "ui":

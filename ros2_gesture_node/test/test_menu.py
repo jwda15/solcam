@@ -162,6 +162,27 @@ def test_wheel_spin_exit_shows_angleset():
     assert sm.state == "IDLE"                                   # 선택 후 닫힘
 
 
+def test_angleset_back_diagonal_snap():
+    # 자전(gun_left=CW) 후 Wheel 나가 AngleSet → 역따봉 = 대각선 315°(-45°) 스냅
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)    # Wheel
+    feed(sm, "gun_left", t, 1.6); t += 1.7
+    feed(sm, None, t, 0.2); t += 0.3
+    feed(sm, "dislike", t, 1.6); t += 1.7                       # → AngleSet
+    assert sm.path[-1].label == "AngleSet"
+    feed(sm, None, t, 0.2); t += 0.3
+    a = [e for e in feed(sm, "dislike", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.kind == "yaw" and a.payload["deg"] == 315 and a.payload.get("snap") is True
+    assert sm.state == "IDLE"
+    # gun_right 면 +45°(deg 45)
+    sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)
+    feed(sm, "gun_right", t, 1.6); t += 1.7
+    feed(sm, None, t, 0.2); t += 0.3
+    feed(sm, "dislike", t, 1.6); t += 1.7
+    feed(sm, None, t, 0.2); t += 0.3
+    a = [e for e in feed(sm, "dislike", t, 1.6)[0] if e.kind == "action"][0].action
+    assert a.payload["deg"] == 45 and a.payload.get("snap") is True
+
+
 def test_wheel_exit_without_spin_no_angleset():
     # 자전 안 썼으면 Wheel 역따봉 → AngleSet 안 뜨고 상위(root)로 정상 복귀
     sm = make_sm(); t = open_menu(sm); t = nav(sm, "two", t)

@@ -64,6 +64,7 @@ private:
   void yawSetAngleCallback(const std_msgs::msg::Float32::SharedPtr msg);
   void composeConfirmCallback(const std_msgs::msg::Empty::SharedPtr msg);
   void wheelActiveCallback(const std_msgs::msg::Bool::SharedPtr msg);
+  void composeSnapCallback(const std_msgs::msg::Float32::SharedPtr msg);
   void estopCallback(const std_msgs::msg::Bool::SharedPtr msg);  // 스페이스바 긴급정지
   void adjustCallback(const ros2_control_node::msg::AdjustCmd::SharedPtr msg);
   void proximityCallback(const ros2_control_node::msg::ProximityArray::SharedPtr msg);
@@ -161,6 +162,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr yaw_angle_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr compose_confirm_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr wheel_active_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr compose_snap_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr estop_sub_;
   rclcpp::Subscription<ros2_control_node::msg::AdjustCmd>::SharedPtr adjust_sub_;
   rclcpp::Subscription<ros2_control_node::msg::ProximityArray>::SharedPtr proximity_sub_;

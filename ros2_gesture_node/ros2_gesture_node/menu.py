@@ -203,6 +203,7 @@ class MenuStateMachine:
         self._last_activity = 0.0
         self._repeating = False
         self._spin_used = False   # 이번 Wheel 세션에서 자전(BODY_WZ)을 썼는가
+        self._spin_dir = None     # 마지막 자전 방향("gun_left"/"gun_right") — 대각선 스냅용
 
     # ------------------------------------------------------------------
     def update(self, gesture: Optional[str], t: float) -> List[Event]:
@@ -290,6 +291,7 @@ class MenuStateMachine:
         self._cand = None
         self._repeating = False
         self._spin_used = False
+        self._spin_dir = None
         self._await_release = TRIGGER
         self._last_activity = t
         ev.append(Event("open"))
@@ -300,6 +302,7 @@ class MenuStateMachine:
         self._cand = None
         self._repeating = False
         self._spin_used = False
+        self._spin_dir = None
         ev.append(Event("close", reason=reason))
 
     def _wheel_in_path(self) -> bool:
@@ -321,6 +324,17 @@ class MenuStateMachine:
         cur = self.path[-1]
         self._repeating = False
         if gesture == BACK:
+            # ★AngleSet 에서 역따봉 = 자전한 방향 쪽 대각선 45° 스냅(기동 없이 즉시 인지).
+            #   gun_left(쓰리건 좌)→Front~Left(deg 315=-45°), gun_right→Front~Right(deg 45).
+            #   "snap": True → control_node 가 몸체 자전 없이 각도만 확정(파란바 안 뜸).
+            if self.root.yaw_set is not None and cur is self.root.yaw_set:
+                deg = 315 if self._spin_dir == "gun_left" else 45
+                self.last_action_name = "Diag"
+                ev.append(Event("action", action=Action(
+                    "yaw", "Diag", {"deg": deg, "snap": True})))
+                self._close("done", ev)
+                self._await_release = BACK
+                return
             # ★자전을 쓰고 Wheel(②) 에서 역따봉/k 로 나갈 때 → 각도확정 선택지로
             if self._spin_used and self.root.yaw_set is not None \
                     and cur is self.root.children.get("two"):
@@ -337,10 +351,11 @@ class MenuStateMachine:
             return
         child = cur.children[gesture]
         if child.is_leaf:
-            # 자전(BODY_WZ) 발동 기록 → Wheel 나갈 때 각도확정 트리거
+            # 자전(BODY_WZ) 발동 기록 → Wheel 나갈 때 각도확정 트리거. 방향도 기억(대각선 스냅용).
             if child.action.kind == "adjust" \
                     and child.action.payload.get("param") == "BODY_WZ":
                 self._spin_used = True
+                self._spin_dir = gesture   # "gun_left" | "gun_right"
             self.last_action_name = child.action.name
             ev.append(Event("action", action=child.action))
             if child.action.stay:

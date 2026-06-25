@@ -267,9 +267,10 @@ class Preview:
         else:
             for ev in self.sm.update(self.held, t):
                 if ev.kind == "action" and ev.action and ev.action.kind == "yaw":
-                    # 촬영구도 프리셋(Front/Right/Back/Left) 선택 → 자동 기동 시작
-                    self._compose_active = True
-                    self._compose_like_start = None
+                    # 프리셋(Front/Right/Back/Left)=기동(파란바). 대각선 스냅(snap)=즉시 확정, 파란바 없음.
+                    if not ev.action.payload.get("snap"):
+                        self._compose_active = True
+                        self._compose_like_start = None
                 if ev.kind == "action" and ev.action and ev.action.kind == "mode":
                     self.mode = ev.action.payload.get("mode", self.mode)
                 elif (ev.kind == "action" and ev.action and ev.action.kind == "phone"
