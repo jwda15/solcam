@@ -660,11 +660,15 @@ void ControlNode::controlStep()
     if (active) {
       // 모드와 무관하게 몸체를 목표각까지 '제자리 자전'(메카넘 회전). 주행(평면이동)은 보류.
       //  → FOLLOW2 처럼 헤딩제어 안 하는 모드에서도 프리셋 선택 시 휠이 돈다.
-      cmd.body_vx = 0.0;
-      cmd.body_vy = 0.0;
       double yaw_err = wrapAngle(compose_target_yaw_ - odom_.pose.yaw);
-      cmd.body_yaw_rate = std::clamp(params_.kp_byaw * yaw_err,
-                                     -params_.w_body_max, params_.w_body_max);
+      if (std::abs(yaw_err) < 0.06) {     // 목표각 도달 → 기동 종료(주행 재개, 60s 안 매달림)
+        active = false; compose_active_ = false;
+      } else {
+        cmd.body_vx = 0.0;
+        cmd.body_vy = 0.0;
+        cmd.body_yaw_rate = std::clamp(params_.kp_byaw * yaw_err,
+                                       -params_.w_body_max, params_.w_body_max);
+      }
     }
     if (active != compose_pub_last_) {
       std_msgs::msg::Bool m; m.data = active;
@@ -811,12 +815,10 @@ void ControlNode::applyTopYawGuard(ControlCommand & cmd, double dt, double owner
     return;
   }
 
-  // ★상단yaw 능동추적은 딱 두 경우만 — 그 외(일반 주행)엔 고정:
-  //   ① wheel_active_ : 2.Wheel 메뉴가 열려 있는 동안(구도 잡는 중) → 주인 추적.
-  //   ② compose_active_ : 프리셋 선택 후 몸체 자전+OAK 재정렬 기동 중.
-  //  주행 중 펄스로 흔들리면 theta_head 가 출렁여 추정/제어가 오염되므로 평상시엔 고정.
-  bool track_now = wheel_active_ || compose_active_;
-  if (!track_now) {
+  // ★상단yaw 능동추적은 오직 2.Wheel 메뉴가 열려 있을 때만(wheel_active_).
+  //  그 외(일반 주행·구도기동 포함)엔 무조건 고정 — 주행 중엔 절대 안 돈다.
+  //  (메뉴를 닫는 순간 wheel_active_=false 가 와서 즉시 고정으로 전환된다.)
+  if (!wheel_active_) {
     cmd.top_yaw_target = 0.0;   // 고정(정지)
     cmd.top_yaw_active = false;
     head_angle_ = yaw_time_accum_ * params_.top_yaw_speed;   // 누적 유지
